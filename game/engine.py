@@ -81,7 +81,7 @@ def play_room(player, beat, difficulty, help_mode, policy, rng):
     """Play one room until it is cleared, the player quits, or the run is out of lives.
     Changes `player` in place and returns the telemetry of this room as a dict."""
     t = {"hp_start": player.hp, "turns": 0, "hits": 0, "misses": 0,
-         "damage_taken": 0.0, "potions_used": 0, "companion_heals": 0,
+         "damage_taken": 0.0, "hp_healed": 0.0, "potions_used": 0, "companion_heals": 0,
          "defends": 0, "defends_on_windup": 0, "windups_seen": 0,
          "deaths": 0, "cleared": False, "quit": False, "out_of_lives": False}
 
@@ -113,7 +113,9 @@ def play_room(player, beat, difficulty, help_mode, policy, rng):
             if action == "potion" and player.potions > 0:
                 player.potions -= 1
                 t["potions_used"] += 1
+                hp_before = player.hp
                 player.hp = min(C.PLAYER_MAX_HP, player.hp + C.POTION_HEAL)
+                t["hp_healed"] += player.hp - hp_before  # only HP actually gained, healing stops at max HP
             elif action == "defend":
                 defending = True
                 t["defends"] += 1
@@ -131,7 +133,9 @@ def play_room(player, beat, difficulty, help_mode, policy, rng):
             if help_mode == "fight" and alive and rng.random() < C.COMPANION_ACCURACY:
                 alive[0].hp -= C.COMPANION_DAMAGE
             if heal_left and player.hp < C.COMPANION_HEAL_TRIGGER * C.PLAYER_MAX_HP:
+                hp_before = player.hp
                 player.hp = min(C.PLAYER_MAX_HP, player.hp + C.COMPANION_HEAL)
+                t["hp_healed"] += player.hp - hp_before
                 heal_left -= 1
                 t["companion_heals"] += 1
 
@@ -171,11 +175,19 @@ def play_room(player, beat, difficulty, help_mode, policy, rng):
         player.hp = C.RESPAWN_HP  # respawn and retry the same room
 
 
+def hp_lost_ratio(t):
+    """Share of all the HP the player had in this room that was lost.
+    Inputs:  t = the room's telemetry dict
+    Output:  damage taken / (HP at the start + HP healed during the room)
+    Healing is added to the HP the player had, so being healed never makes a room look harder."""
+    return t["damage_taken"] / (t["hp_start"] + t["hp_healed"])
+
+
 def band_position(t):
     """Where did this room land relative to the frozen target band?"""
     if not t["cleared"] or t["deaths"] > 0:
         return "too_hard"
-    lost = t["damage_taken"] / t["hp_start"]
+    lost = hp_lost_ratio(t)
     if lost < C.BAND_LOW:
         return "too_easy"
     if lost > C.BAND_HIGH:
@@ -230,7 +242,7 @@ def play_run(controller, policy, story, seed):
                "decision_valid": decision_valid,
                "propensity": decision.get("propensity"),
                **t,
-               "hp_lost_ratio": round(t["damage_taken"] / t["hp_start"], 4),
+               "hp_lost_ratio": round(hp_lost_ratio(t), 4),
                "band": band_position(t)}
         row["in_band"] = row["band"] == "in_band"
         history.append(row)

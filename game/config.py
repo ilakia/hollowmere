@@ -8,7 +8,8 @@ PLAYER_MAX_HP = 100
 PLAYER_ATTACK = 15           # damage of one successful hit
 POTIONS_PER_RUN = 3          # 3 instead of 2, because a run is now 10 rooms long
 POTION_HEAL = 35
-REST_HEAL = 40               # HP regained when walking to the next attraction
+REST_HEAL = 60               # HP regained when walking to the next attraction (60 instead of 40,
+                             # so harder early rooms do not snowball into zone 3 and the finale)
 RESPAWN_HP = 60              # HP after dying (the attraction restarts)
 MAX_DEATHS_PER_RUN = 3       # the 3rd death ends the run ("trapped forever")
 MAX_TURNS_PER_ATTEMPT = 60   # safety cap, a room can never loop forever
@@ -24,12 +25,14 @@ ZONE_NAMES = {1: "Entrance & Midway", 2: "The Funhouse", 3: "The Dark Rides", 4:
 # attack_every = 2: the ghost glows on one turn and strikes on the next.
 # special_every / special_damage: a charged attack every N turns (only Walt has one).
 # A good player defends whenever a ghost is charging ("wind-up").
+# wisp hp 20 instead of 14: 2 hits instead of 1 on normal, but still 1 hit on easy (20 x 0.75 = 15).
+# walt special_damage 18 instead of 22: the finale was too hard for 86% of beginner bots.
 ENEMY_TYPES = {
-    "wisp":        {"hp": 14,  "damage": 3,  "accuracy": 0.80, "attack_every": 1},
+    "wisp":        {"hp": 20,  "damage": 3,  "accuracy": 0.80, "attack_every": 1},
     "animatronic": {"hp": 32,  "damage": 6,  "accuracy": 0.75, "attack_every": 1},
     "wraith":      {"hp": 50,  "damage": 16, "accuracy": 0.70, "attack_every": 2},
     "walt":        {"hp": 110, "damage": 6,  "accuracy": 0.75, "attack_every": 1,
-                    "special_every": 3, "special_damage": 22},
+                    "special_every": 3, "special_damage": 18},
 }
 
 # ---------- Difficulty lever (controlled by the director) ----------
