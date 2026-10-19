@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Generated data (can always be recreated from the seeds)
+data/
+
+# Mac
+.DS_Store
+AI_USAGE.md
+PROBLEM_LOG.md
