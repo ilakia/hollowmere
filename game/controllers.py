@@ -8,10 +8,13 @@ Every controller has the same two methods, so they can be swapped freely:
   decide(state)                 -> decision dict
   observe(state, decision, row) -> learn from what happened (only the bandit will use it)
 
-Built so far: Fixed (baseline), Random (for collecting unbiased training data), Rule.
-To come: BanditController, LLMController.
+Built so far: Fixed (baseline), Random (for collecting unbiased training data), Rule, Bandit.
+To come: LLMController.
 """
+from pathlib import Path
+
 from . import config as C
+from .bandit import ARMS, CONTEXT_NAMES, FINALE_ARMS, LinUCB, make_context
 from .skill import SkillEstimator, load_expected_table
 
 
@@ -107,4 +110,67 @@ class RuleController(Controller):
         self.died_last_room = row["deaths"] > 0
 
 
-CONTROLLERS = {c.name: c for c in [FixedController, RandomController, RuleController]}
+THREAT_FOR_DIFFICULTY = {"easy": "low", "normal": "medium", "hard": "high"}
+BANDIT_MODEL_PATH = Path("data/bandit_model.npz")
+
+
+class BanditController(Controller):
+    """LinUCB contextual bandit (game/bandit.py). It is not told any rules: it learns which
+    (difficulty, Walt mode) works in which situation from the reward, across many players.
+    The room is then picked by threat to match the difficulty (easy -> low, hard -> high).
+
+    The two models are shared by ALL runs (class attributes), so experience carries over
+    from player to player. learning = True while training (explore + update after each room);
+    False when testing (always the best-known arm, no updates)."""
+    name = "bandit"
+    model = None
+    finale_model = None
+    learning = False
+
+    @classmethod
+    def reset(cls, alpha):
+        n = len(CONTEXT_NAMES)
+        cls.model = LinUCB(ARMS, n, alpha)
+        cls.finale_model = LinUCB(FINALE_ARMS, n, alpha)
+
+    @classmethod
+    def save(cls, path=BANDIT_MODEL_PATH):
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        cls.model.save(path)
+        cls.finale_model.save(Path(path).with_name("bandit_finale_model.npz"))
+
+    @classmethod
+    def load(cls, path=BANDIT_MODEL_PATH):
+        if not Path(path).exists():
+            raise FileNotFoundError(f"{path} is missing. Run: python bandit_experiment.py")
+        cls.reset(alpha=0.0)
+        cls.model.load(path)
+        cls.finale_model.load(Path(path).with_name("bandit_finale_model.npz"))
+
+    def __init__(self, rng=None):
+        super().__init__(rng)
+        if BanditController.model is None:
+            BanditController.load()
+        self.skill = SkillEstimator(load_expected_table())
+        self.died_last_room = False
+        self.last_choice = None
+
+    def decide(self, state):
+        x = make_context(state, self.skill.estimate, self.died_last_room)
+        model = BanditController.finale_model if state["is_finale"] else BanditController.model
+        i = model.choose(x, self.rng, explore=BanditController.learning)
+        difficulty, help_mode = model.arms[i]
+        beat = pick_beat(state["valid_beats"], THREAT_FOR_DIFFICULTY[difficulty])
+        self.last_choice = (model, i, x)
+        return {"beat_id": beat["id"], "difficulty": difficulty, "help_mode": help_mode}
+
+    def observe(self, state, decision, row):
+        if BanditController.learning:
+            model, i, x = self.last_choice
+            reward = 1.0 if row["band"] == "in_band" else 0.0
+            model.update(i, x, reward)
+        self.skill.update(row)
+        self.died_last_room = row["deaths"] > 0
+
+
+CONTROLLERS = {c.name: c for c in [FixedController, RandomController, RuleController, BanditController]}
