@@ -55,7 +55,18 @@ COMPANION_ACCURACY = 0.7
 
 # ---------- Target difficulty band (FROZEN, do not tune per controller) ----------
 # A room is "in band" if the player cleared it without dying and lost
-# between 30% and 70% of the HP they entered with.
+# between 30% and 70% of all the HP they had in the room (start HP + HP healed).
 # Less than 30% = too easy (boring). Death or more than 70% = too hard.
 BAND_LOW = 0.30
 BAND_HIGH = 0.70
+
+# ---------- Skill estimator (game/skill.py) ----------
+SKILL_EMA_ALPHA = 0.3        # weight of the newest room; the last 5 rooms carry ~83% of the weight
+SKILL_RESIDUAL_CAP = 1.0     # one room can move the estimate by at most this much (a death can't dominate)
+
+# ---------- Rule director (controllers.py) ----------
+# Thresholds chosen on training seeds 0-299 only (grid search); tested on new seeds afterwards.
+RULE_LOW_HP = 0.4            # below 40% HP before a room: play it safe (0.3 gave identical results)
+RULE_STRUGGLING = 0.15       # estimate above +0.15: losing 15 points more HP than an average player
+                             # (higher gave <0.01 more in band but fewer beginner escapes)
+RULE_CRUISING = 0.025        # estimate below -0.025: losing a little less HP than average
