@@ -13,7 +13,11 @@ pip install -r requirements.txt
 
 python sanity_check.py --games 500          # is the game working and balanced?
 python simulate.py --games 1000 --controllers fixed random   # bot data -> data/sim_runs.csv
-python play.py                              # play it yourself in the terminal
+python build_tables.py                      # expected-HP-loss table for the skill estimator
+python compare_directors.py --controllers fixed random rule  # rule director vs baselines
+python failure_predictor.py                 # failure predictor (trained on random-director data)
+python bandit_experiment.py                 # train + test the bandit, draws the learning curve
+python play.py --controller rule            # play it yourself (fixed, random, rule or bandit)
 ```
 
 ## Files
@@ -25,10 +29,19 @@ python play.py                              # play it yourself in the terminal
 | `game/story.py` | Loads the attractions, checks them for mistakes, lists which are valid next |
 | `game/engine.py` | The rules: one room (`play_room`), one full run (`play_run`), the band check, decision validation |
 | `game/bots.py` | Simulated players: beginner, average, expert, rage_quitter (random settings inside a range) |
-| `game/controllers.py` | Directors: `fixed` (baseline) and `random` (for unbiased training data). Rule, bandit and LLM come next |
+| `game/controllers.py` | Directors: `fixed` (baseline), `random` (unbiased training data), `rule` (if-else on the skill estimate), `bandit` (LinUCB). LLM comes next |
+| `game/skill.py` | Skill estimator: weighted moving average of HP lost compared with an average player in the same situation |
+| `game/expected_hp_lost.csv` | "Average player" table per attraction × difficulty × Walt mode (made by `build_tables.py`) |
+| `game/bandit.py` | LinUCB contextual bandit: 12 arms (difficulty × Walt mode) + 3 finale arms |
 | `simulate.py` | Bots play many runs, one CSV row per room |
 | `sanity_check.py` | Determinism check, skill-ordering check, summary table |
+| `build_tables.py` | Builds `game/expected_hp_lost.csv` from random-director data |
+| `compare_directors.py` | Directors on the same bots and dice rolls (paired comparison) |
+| `failure_predictor.py` | Predicts room failure before it is played (logistic regression vs gradient boosting) |
+| `bandit_experiment.py` | Trains the bandit, chooses its exploration strength, tests it, plots `figures/bandit_learning_curve.png` |
 | `play.py` | Human play in the terminal, telemetry saved under an anonymous ID |
+
+**Seeds:** 0–1999 training (tables, tuning, bandit learning), 50000+ validation (bandit exploration strength), 100000–100999 final director test, 200000+ failure-predictor test. Nothing was tuned on test seeds.
 
 ## How the game works (numbers still being balanced)
 
@@ -50,6 +63,12 @@ python play.py                              # play it yourself in the terminal
 - **Same seed = same bot and same dice rolls for every controller**, so controllers are compared on identical players (paired comparison).
 - **`true_*` columns are hidden skill**, logged only for analysis. They must never be used as model features.
 - **Band measured against start HP + HP healed instead of start HP alone**, because the old rule counted healing as extra difficulty: healing lets the player survive longer and take more total damage, so `heal` mode looked harmful (beginner too-hard share 31% vs 27% for `stay_back`, although it halved deaths), and 1,112 of 17,212 rooms cleared without dying scored above 100%. A director learning from that number would wrongly learn "healing is bad". Net HP loss (start − end) was rejected because potions could hide a hard fight and the ratio could go below 0.
+- **Skill estimate = weighted moving average (α = 0.3) of HP lost compared with an average player in the same room, difficulty and Walt mode, instead of raw HP lost, hit rate or a whole-run average**, because comparing with the same situation doubled how well it predicts the next room (0.20 → 0.42 rank correlation), hit rate would silently fail for humans (aim is fixed in the text version), and a whole-run average cannot follow a player who improves (bots do not learn yet, which flatters long windows).
+- **Rule director never uses `hard`**, because hard difficulty + high-threat room + no help overshot in tuning (experts escaped only 79% of runs); normal difficulty with a harder room and Walt staying back worked better.
+- **Bandit reward = 1 if the room is in band, else 0, instead of partial credit or an extra penalty for too hard**, because it is exactly the measure every director is graded on, so the reward cannot favour the bandit.
+- **Bandit arms = difficulty × Walt mode (12) + difficulty only in the finale (3), room picked by threat to match the difficulty, instead of every room × difficulty × mode (~228)**, because there would be far too little data per arm.
+- **Logistic regression kept as the main failure predictor instead of gradient boosting**, because both reach the same AUC (0.93) and the simpler model is easier to explain.
+- **LSTM predictor cut** (first item on the cut list): gradient boosting already added nothing over a straight-line model, so a sequence model was very unlikely to change the conclusion, and it would have needed PyTorch.
 - **No extra "guard" help mode (Walt fights only when the player's HP is low) instead of a 5th mode**, because `fight` already works as a rescue (beginner deaths per room 0.21 with `stay_back` vs 0.04 with `fight`, random director, 500 runs per bot type), the main balance problem is rooms being *too easy*, not too hard, and an automatic in-room rescue would do part of the director's job for it, which blurs the comparison between directors. A 5th mode would also grow the bandit's choices from 12 to 15. Walt can still be *shown* stepping in during `fight`/`heal` in the pygame panel.
 
 ## Current balance (fixed director, 500 runs per bot type, 19 Oct, after balancing)
@@ -61,3 +80,21 @@ python play.py                              # play it yourself in the terminal
 | expert | 100% | 51% | 49% | 0% | 91% |
 
 Balancing changes (19 Oct): wisp HP 14 → 20, rest heal 40 → 60, Walt's lantern blast 22 → 18 (reasons in `game/config.py` and the problem log). Every bot type now has rooms on both sides of the band, so an adaptive director has room to improve. Experts are still too easy in half the rooms on `normal`, which a director can fix by choosing `hard`.
+
+## Results so far (test seeds 100000–100999, 1000 runs per bot type, bots only)
+
+Share of rooms in band:
+
+| Bot | fixed | random | rule | bandit |
+|---|---|---|---|---|
+| beginner | 53% | 44% | 57% | 72% |
+| rage_quitter | 59% | 47% | 66% | 77% |
+| average | 61% | 47% | 69% | 77% |
+| expert | 49% | 39% | 63% | 77% |
+| **all** | **55.6%** | **44.2%** | **64.0%** | **75.7%** |
+
+- Beginners escape 51% (fixed), 80% (rule), 97% (bandit) of runs.
+- **About half of the bandit's gain comes from Walt's `heal` mode** (94% of its training choices). A non-adaptive director that always uses normal + heal already reaches 66.9%, more than the rule director. The rest (66.9% → 75.7%) is real adaptation: hard + heal for strong players, normal + heal for the others.
+- The bandit learns fast: about 62% in its first 50 training runs, above the rule director after ~100 runs, ~77% by 8,000 runs (`figures/bandit_learning_curve.png`).
+- Failure predictor (new seeds): AUC 0.93 on random-director games, 0.84 on rule-director games, well calibrated (predicted 12.0% vs actual 11.8% failures). Expected HP loss of the chosen room is by far the strongest input; the skill estimate is second.
+- All results come from simulated bots. The bots model players, they are not real players.
