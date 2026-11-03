@@ -42,6 +42,7 @@ from window.effects import Flashes, Fog, Particles, Shake, vignette
 from window.park_map import draw_park_map
 from window.scenery import Scenery
 from window.setpieces import draw_set_piece
+from window.pieces_z3 import draw_big_gate
 from window.sound import SoundBank
 from window.voice import WaltVoice
 
@@ -798,29 +799,6 @@ class WindowPolicy(HumanPolicy):
         self.previous_ghosts = None
         self.previous_wind_up = False
         self.window.popups = []
-
-
-def draw_big_gate(c, cx, openness, font):
-    """The park's exit: stone pillars, an iron arch with the park's name, two barred doors.
-    openness 0 = closed, 1 = wide open (the doors turn inwards and look narrower)."""
-    top = GROUND_Y - 290
-    for side in (-1, 1):                                                       # stone pillars with lamps
-        px = cx + side * 190
-        pygame.draw.rect(c, (70, 80, 85), (px - 28, top + 20, 56, GROUND_Y - top - 20))
-        pygame.draw.rect(c, (95, 105, 110), (px - 36, top + 10, 72, 18))
-        pygame.draw.circle(c, (255, 230, 160), (px, top), 10)
-    pygame.draw.arc(c, (40, 45, 50), (cx - 165, top - 40, 330, 140), 0, math.pi, 12)   # iron arch
-    sign = font.render("HOLLOWMERE PARK", True, (230, 220, 190))
-    c.blit(sign, sign.get_rect(center=(cx, top - 4)))
-    door_width = int(160 * (1 - 0.85 * openness))                             # doors swing open
-    for side in (-1, 1):
-        hinge = cx + side * 162
-        left = hinge if side < 0 else hinge - door_width
-        door = pygame.Rect(left, top + 40, door_width, GROUND_Y - top - 40)
-        for i in range(0, max(door_width, 1), 14):                             # iron bars
-            pygame.draw.line(c, (30, 32, 38), (door.x + i, door.y), (door.x + i, door.bottom), 4)
-        pygame.draw.line(c, (30, 32, 38), (door.x, door.y + 20), (door.right, door.y + 20), 5)
-        pygame.draw.line(c, (30, 32, 38), (door.x, door.bottom - 30), (door.right, door.bottom - 30), 5)
 
 
 def ending_scene(w, outcome):

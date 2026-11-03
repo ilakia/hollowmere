@@ -398,6 +398,11 @@ def exit_gate(s, cx, ctx, font):
     label(s, "EXIT", cx, GROUND_Y - 250, (150, 255, 200), font)
 
 
+from .pieces_z1 import carousel, cotton_candy, ferris_base, photo_booth, ring_toss, ticket_booth   # noqa: E402
+from .pieces_z2 import barrel_tunnel, clown_alley, hall_of_mirrors, puppet_theater, tilted_room   # noqa: E402
+from .pieces_z3 import (exit_gate, ghost_train, haunted_manor, log_flume, tunnel_boats, wax_museum,  # noqa: E402
+                        workshop)
+
 SET_PIECES = {
     "z1_ticket_booth": ticket_booth, "z1_carousel": carousel, "z1_cotton_candy": cotton_candy,
     "z1_photo_booth": photo_booth, "z1_ring_toss": ring_toss, "z1_ferris_wheel": ferris_base,
