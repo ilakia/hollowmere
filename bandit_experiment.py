@@ -35,15 +35,16 @@ EARLY_RUNS = 400
 BLOCK = 400                      # runs per learning-curve point after that
 
 
-def train(alpha, train_seeds):
-    """Train a fresh bandit. Output: one row per training room (with its run number)."""
+def train(alpha, train_seeds, profiles=ORDER):
+    """Train a fresh bandit. profiles = bot types it meets (all by default; fewer for the
+    held-out test in robustness_experiment.py). Output: one row per training room."""
     BanditController.reset(alpha)
     BanditController.learning = True
     story = Story()
     rows = []
     run_number = 0
     for seed in range(train_seeds):
-        for profile in ORDER:      # interleave bot types, so the bandit meets every kind of player
+        for profile in profiles:   # interleave bot types, so the bandit meets every kind of player
             bot = Bot(profile, random.Random(f"bot-{profile}-{seed}"))
             controller = BanditController(rng=random.Random(f"ctrl-{seed}"))
             for row in play_run(controller, bot, story, seed):

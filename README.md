@@ -19,6 +19,7 @@ python failure_predictor.py                 # failure predictor (trained on rand
 python bandit_experiment.py                 # train + test the bandit, draws the learning curve
 python play.py --controller rule            # play it yourself in the terminal (fixed, random, rule, bandit)
 python play_window.py --controller rule     # play it in a game window (pygame)
+python robustness_experiment.py --games 300 # held-out bot type and +/-20% sensitivity check
 
 # LLM directors need Ollama: brew install ollama && brew services start ollama && ollama pull llama3.2:3b
 python llm_experiment.py --games 25 --batch 2 --pause 180                     # plain LLM director
@@ -47,6 +48,7 @@ python llm_experiment.py --controller llm_risk --games 25 --batch 2 --pause 180 
 | `failure_predictor.py` | Predicts room failure before it is played (logistic regression vs gradient boosting) |
 | `bandit_experiment.py` | Trains the bandit, chooses its exploration strength, tests it, plots `figures/bandit_learning_curve.png` |
 | `llm_experiment.py` | LLM directors vs the others on the same seeds, in batches with cooling pauses |
+| `robustness_experiment.py` | Held-out bot type (re-learn without one type, test on it) and +/-20% changes to the game |
 | `play.py` | Human play in the terminal, telemetry saved under an anonymous ID |
 | `play_window.py` | Human play in a pygame window (same engine and telemetry); `--demo` plays by itself for testing |
 
@@ -125,5 +127,32 @@ The LLM test is smaller because the language model overheats the laptop (decided
 - **Plain LLM (`llm`, llama3.2 3B): worst director, below random.** 0% invalid answers and 0 crashes, but it follows story logic instead of the goal: easy rooms early, hard later, always a hard finale ("Walt's final challenge"), never `heal`, and the same choices for every player type.
 - **`llm_risk`** (the LLM gets the 6 options with the highest predicted in-band chance, with numbers) ties the bandit (76.5% vs 76.4%). The prompt was developed on training seeds 1500–1524; one fix was needed there (the model chose "hard" in the finale for drama even when the numbers said 90% too hard).
 - **`predictor`** (same numbers, always option 1, no LLM) is the best director: 78.5% (also 78.5% on 1000 runs per bot type), beginners escape 96%. So the gain comes from the prediction model, and the LLM's own choices slightly lower the result. This ablation was added after the LLM test.
+
+
+### Robustness (test seeds 100000+, 300 runs per bot type per condition, no LLM)
+
+**Held-out bot type** (table, band model and bandit re-learned without that type, tested only on it; rule thresholds were tuned on all types):
+
+| Unseen type | fixed | rule | bandit | predictor |
+|---|---|---|---|---|
+| beginner | 52.8% | 57.3% | 70.7% | 73.5% |
+| rage_quitter | 58.5% | 64.5% | 76.6% | 79.7% |
+| average | 61.8% | 68.0% | 74.1% | 83.2% |
+| expert | 48.5% | 63.3% | 62.4% | 72.7% |
+
+**+/-20% game changes at test time** (directors keep what they learned on the original game; all bot types):
+
+| Condition | fixed | rule | bandit | predictor |
+|---|---|---|---|---|
+| original | 55.4% | 63.3% | 75.2% | 79.0% |
+| ghost damage x0.8 | 48.0% | 57.7% | 71.5% | 75.7% |
+| ghost damage x1.2 | 54.2% | 58.5% | 70.9% | 76.1% |
+| ghost HP x0.8 | 50.0% | 51.4% | 69.6% | 75.0% |
+| ghost HP x1.2 | 54.8% | 62.7% | 76.3% | 80.3% |
+| rest heal x0.8 | 55.0% | 63.2% | 74.9% | 78.7% |
+| rest heal x1.2 | 55.3% | 63.4% | 75.4% | 78.9% |
+
+- The order predictor > bandit > rule > fixed holds in all 7 game conditions and for 3 of 4 unseen bot types. The one exception: a bandit that never met experts falls to 62.4% on them, slightly below the rule director (63.3%); the predictor stays at 72.7%.
+- Weaker ghosts (HP or damage x0.8) hurt every director most, because more rooms become too easy; rest healing hardly matters.
 
 - All results come from simulated bots. The bots model players, they are not real players.
