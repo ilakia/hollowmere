@@ -78,34 +78,53 @@ REST_LINE = "Sit down, catch your breath. I'll handle them!"
 COVER_SECONDS = 5.0      # how long the player rests while Walt fights (the engine counts it as one turn)
 WALT_HITS = ["Take that!", "Back off!", "Not my kid!", "Hah!"]
 TRAVEL_LINES = ["This way, kid.", "Stay close.", "Don't touch anything that moves.", "Almost there.",
-                "I used to fix these rides.", "Hear that? Keep walking."]
+                "These rides were something, back then.", "Hear that? Keep walking."]
 ZONE_INTROS = {
     1: "The Entrance & Midway. Ticket booths, a carousel that turns by itself, and the ferris wheel.",
     2: "The Funhouse. Mirrors, barrels and a tilted room. Nothing here is the right way up.",
     3: "The Dark Rides. The ghost train still runs. So does something inside it.",
-    4: "The Exit Gate. Dawn is close. Walt walks a little slower now.",
+    4: "The Exit Gate. Dawn is close, and the way out is just ahead.",
 }
-# One line per attraction, shown while walking up to it: a bit of story plus a useful tip for its ghosts.
-ROOM_TIPS = {
-    "z1_ticket_booth": "Someone still sells tickets here. Two wisps flit about: weak, but quick. Hit them fast.",
-    "z1_carousel": "The horses never stop. Three wisps ride them: one at a time, and keep your HP up.",
-    "z1_cotton_candy": "The mascot's smile is too wide. It hits harder than the wisp: watch your HP.",
-    "z1_photo_booth": "Look closely at the 1987 photo before you go in. The animatronic hits steadily.",
-    "z1_ring_toss": "Two animatronic barkers, no prizes. Long fight: a potion may be worth it here.",
-    "z1_ferris_wheel": "One wraith climbs down the wheel. When it glows, it is about to strike: DEFEND.",
-    "z2_mirrors": "A hundred of you, and no Walt in any mirror. Strange... One animatronic, two wisps.",
-    "z2_barrel": "The barrel spins and laughs. Four wisps tumble out: many small hits, strike quickly.",
-    "z2_tilted_room": "Nothing here stands straight. An animatronic and a wisp wait on the slope.",
-    "z2_laughing_stage": "She has been laughing since 1987. A wraith hides behind her: defend when it glows.",
-    "z2_clown_alley": "Walk through the clown's mouth. Two animatronics and a wisp: a long, hard fight.",
-    "z2_puppet_theater": "Someone is still pulling the strings. Wraith and animatronic: defend on every glow.",
-    "z3_ghost_train": "The ghost train never stopped running. A wraith rides it: watch for the glow.",
-    "z3_tunnel_boats": "Into the skull's mouth. Two wisps and an animatronic in the dark water.",
-    "z3_haunted_manor": "The lights go on and off by themselves. A wraith and two wisps live here.",
-    "z3_log_flume": "Splash! Two animatronics guard the pool. Steady hits: keep a potion ready.",
-    "z3_wax_museum": "One pedestal is empty: 'W. Hale, Mechanic'. Three animatronics: a long fight.",
-    "z3_workshop": "Walt's old workshop. Gears still turn. A wraith and an animatronic: defend on the glow.",
-    "finale_gate": "The gate is so close. Walt walks slower now... When his lantern glows: DEFEND.",
+# A short story about each place (two lines), shown while walking up to it. No clues, no tips.
+PLACE_STORIES = {
+    "z1_ticket_booth": ("The ticket booth where every night began. A bell rings on the counter,",
+                        "though nobody has bought a ticket here in years."),
+    "z1_carousel": ("The carousel's music box still plays its waltz, slow and out of tune.",
+                    "The painted horses go round and round, waiting for riders."),
+    "z1_cotton_candy": ("Sugar still hangs sweet in the air around the old candy stand.",
+                        "The machine spins on its own, spinning pink clouds for no one."),
+    "z1_photo_booth": ("Families once squeezed in here for four photos for a dime.",
+                       "The curtain moves, though there is no wind tonight."),
+    "z1_ring_toss": ("Three rings for a quarter, a stuffed bear for the lucky ones.",
+                     "The prizes on the wall have waited a very long time to be won."),
+    "z1_ferris_wheel": ("The Big Wheel was the pride of the park, the highest view in town.",
+                        "Its empty cabins creak as they turn slowly in the dark."),
+    "z2_mirrors": ("The Hall of Mirrors stretches on in silver and gold.",
+                   "Every turn shows another corridor, and none of them end."),
+    "z2_barrel": ("The Barrel of Laughs turns and turns, and the laughter echoes inside it.",
+                  "Children used to tumble through here, giggling, all summer long."),
+    "z2_tilted_room": ("In the Tilted Room the floor slopes and the paintings hang crooked.",
+                       "The chairs slide slowly to one side, all by themselves."),
+    "z2_laughing_stage": ("The Laughing Lady once greeted every visitor to the Funhouse.",
+                          "Her laughter rolls through the dark, a little too loud."),
+    "z2_clown_alley": ("Clown Alley: you walk in through a giant painted smile.",
+                       "Balloons drift between the posters, their strings trailing to the ground."),
+    "z2_puppet_theater": ("The puppet theater's curtain is open, the show already started.",
+                          "Three marionettes dance on their strings to music only they can hear."),
+    "z3_ghost_train": ("The Ghost Train rattles over its tracks with nobody at the controls.",
+                       "Its carts race through the loops faster and faster."),
+    "z3_tunnel_boats": ("Little boats drift on black water toward the mouth of a stone skull.",
+                        "A lantern flickers at the front of each one."),
+    "z3_haunted_manor": ("The Haunted Manor was built to scare. Tonight, it does.",
+                         "Windows light up one by one, then go dark again."),
+    "z3_log_flume": ("At the Log Flume the water still rushes down the wooden chute.",
+                     "Empty logs splash into the pool below, one after another."),
+    "z3_wax_museum": ("The Wax Museum: famous faces frozen on velvet pedestals.",
+                      "A soldier, a queen, a ballerina. Their glass eyes shine in the dark."),
+    "z3_workshop": ("Behind the rides lies the maintenance workshop. Tools hang on the wall,",
+                    "and the gears turn, as if someone just stepped out."),
+    "finale_gate": ("The Exit Gate. Beyond the iron bars, the sky grows pale.",
+                    "Just one more step to the outside world."),
 }
 ENDINGS = {
     "escaped": "The gate creaks open. Dawn. Walt fades into the light. 'Not bad. Not bad at all.'",
@@ -591,10 +610,9 @@ class WindowNarrator:
         box = pygame.Surface(caption.size, pygame.SRCALPHA)
         box.fill((10, 8, 20, 170))
         c.blit(box, caption)
-        for i, line in enumerate(wrap_text(beat["text"], w.font_small, 630)[:2]):
-            draw_text(c, line, w.font_small, COLORS["text"], caption.x + 14, caption.y + 10 + 22 * i)
-        tip = ROOM_TIPS.get(beat["id"], "")                                  # story + a tip for this room
-        draw_text(c, tip, w.font_small, COLORS["flashlight"], caption.x + 14, caption.y + 58)
+        story_lines = PLACE_STORIES.get(beat["id"], (beat["title"], ""))  # a short story about this place
+        for i, line in enumerate(story_lines):
+            draw_text(c, line, w.font, COLORS["text"], caption.x + 14, caption.y + 14 + 30 * i)
         if self.last_result and walked < 250 and appear is None:
             text, band = self.last_result
             draw_text(c, f"Last attraction: {text}", w.font_small, COLORS[band], 480, 158, center=True)
