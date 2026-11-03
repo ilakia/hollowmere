@@ -14,7 +14,7 @@ Everything is drawn and generated in code (window/ folder), so there are no imag
   python play_window.py --controller rule    # start with this director selected
   python play_window.py --no-sound
 
-Controls: A attack (then Space to stop the timing bar), D defend, P potion, M mute,
+Controls: A attack (then Space to stop the timing bar), D defend, P potion, M mute, F full screen,
 Space/Enter continue, Y/N after a death. Closing the window ends the game without saving it.
 
   python play_window.py --demo figures/screens   # plays by itself and saves screenshots (for testing)
@@ -186,9 +186,14 @@ class GameWindow:
     """Everything the screens share: window, fonts, sprites, effects, sound, and what room we are in.
     demo_dir != None: no waiting for input; the game plays itself and saves screenshots."""
 
-    def __init__(self, director_name, demo_dir=None, sound_on=True):
+    def __init__(self, director_name, demo_dir=None, sound_on=True, fullscreen=True):
         pygame.init()
-        self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
+        # SCALED: the game keeps its 960 x 540 picture and pygame scales it up sharply to the screen
+        # (black bars if the screen has other proportions). F switches full screen on and off.
+        flags = pygame.SCALED
+        if fullscreen and demo_dir is None:
+            flags |= pygame.FULLSCREEN
+        self.screen = pygame.display.set_mode((WIDTH, HEIGHT), flags)
         pygame.display.set_caption("Hollowmere")
         # the scene is drawn here, then shaken onto the screen. Depth 24 = no transparency channel: on a Mac the
         # display format has one, and without this the whole scene showed up black in the real window
@@ -285,6 +290,9 @@ class GameWindow:
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_m:
                     self.sounds.toggle_mute()
                     continue
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_f:
+                    pygame.display.toggle_fullscreen()
+                    continue
                 esc_used = any(pygame.K_ESCAPE in b.keys for b in buttons)
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE and not esc_used:
                     self.pause_menu()
@@ -380,6 +388,8 @@ class GameWindow:
                 close_game()
             if event.type == pygame.KEYDOWN and event.key == pygame.K_m:
                 self.sounds.toggle_mute()
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_f:
+                pygame.display.toggle_fullscreen()
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 self.pause_menu()
         self.clock.tick(FPS)
@@ -506,7 +516,7 @@ def title_menu(w, director):
         draw_text(w.canvas, "One night in a haunted theme park. Walt knows the way out... or does he?",
                   w.font, COLORS["dim_text"], WIDTH // 2, 175, center=True)
         draw_text(w.canvas, "A attack (stop the timing bar with Space)   ·   D defend when a ghost glows   ·   "
-                  "P potion   ·   M mute", w.font_small, COLORS["dim_text"], WIDTH // 2, 365, center=True)
+                  "P potion   ·   M mute   ·   F full screen", w.font_small, COLORS["dim_text"], WIDTH // 2, 365, center=True)
         if w.player_id:
             games, knows = player_history(w.player_id, w.save_path)
             if games:
@@ -1224,13 +1234,15 @@ def main():
     ap.add_argument("--controller", default="rule", choices=WINDOW_DIRECTORS, help="pre-selected in the menu")
     ap.add_argument("--out", default="data/window_runs.csv")
     ap.add_argument("--no-sound", action="store_true")
+    ap.add_argument("--windowed", action="store_true", help="start in a window instead of full screen")
     ap.add_argument("--demo", default=None, help="folder for screenshots: plays by itself, saves no game")
     args = ap.parse_args()
     if args.demo is not None:
         os.environ["SDL_AUDIODRIVER"] = "dummy"       # demo runs silently
 
     story = Story()
-    window = GameWindow(args.controller, demo_dir=args.demo, sound_on=not args.no_sound)
+    window = GameWindow(args.controller, demo_dir=args.demo, sound_on=not args.no_sound,
+                        fullscreen=not args.windowed)
     window.save_path = args.out
     window.sounds.start_music()
     while True:
