@@ -17,7 +17,12 @@ python build_tables.py                      # expected-HP-loss table for the ski
 python compare_directors.py --controllers fixed random rule  # rule director vs baselines
 python failure_predictor.py                 # failure predictor (trained on random-director data)
 python bandit_experiment.py                 # train + test the bandit, draws the learning curve
-python play.py --controller rule            # play it yourself (fixed, random, rule or bandit)
+python play.py --controller rule            # play it yourself in the terminal (fixed, random, rule, bandit)
+python play_window.py --controller rule     # play it in a game window (pygame)
+
+# LLM directors need Ollama: brew install ollama && brew services start ollama && ollama pull llama3.2:3b
+python llm_experiment.py --games 25 --batch 2 --pause 180                     # plain LLM director
+python llm_experiment.py --controller llm_risk --games 25 --batch 2 --pause 180   # LLM + predicted risks
 ```
 
 ## Files
@@ -29,7 +34,9 @@ python play.py --controller rule            # play it yourself (fixed, random, r
 | `game/story.py` | Loads the attractions, checks them for mistakes, lists which are valid next |
 | `game/engine.py` | The rules: one room (`play_room`), one full run (`play_run`), the band check, decision validation |
 | `game/bots.py` | Simulated players: beginner, average, expert, rage_quitter (random settings inside a range) |
-| `game/controllers.py` | Directors: `fixed` (baseline), `random` (unbiased training data), `rule` (if-else on the skill estimate), `bandit` (LinUCB). LLM comes next |
+| `game/controllers.py` | Directors: `fixed` (baseline), `random` (unbiased training data), `rule` (if-else on the skill estimate), `bandit` (LinUCB), `llm` (local language model), `llm_risk` (LLM + predicted risk per option), `predictor` (top predicted option, no LLM) |
+| `game/llm.py` | LLM prompts, Ollama call (temperature 0, fixed seed), answer cache `data/llm_cache.json` |
+| `game/risk.py` | Shared feature description of a situation + option; the band model used by `llm_risk` and `predictor` |
 | `game/skill.py` | Skill estimator: weighted moving average of HP lost compared with an average player in the same situation |
 | `game/expected_hp_lost.csv` | "Average player" table per attraction × difficulty × Walt mode (made by `build_tables.py`) |
 | `game/bandit.py` | LinUCB contextual bandit: 12 arms (difficulty × Walt mode) + 3 finale arms |
@@ -39,7 +46,9 @@ python play.py --controller rule            # play it yourself (fixed, random, r
 | `compare_directors.py` | Directors on the same bots and dice rolls (paired comparison) |
 | `failure_predictor.py` | Predicts room failure before it is played (logistic regression vs gradient boosting) |
 | `bandit_experiment.py` | Trains the bandit, chooses its exploration strength, tests it, plots `figures/bandit_learning_curve.png` |
+| `llm_experiment.py` | LLM directors vs the others on the same seeds, in batches with cooling pauses |
 | `play.py` | Human play in the terminal, telemetry saved under an anonymous ID |
+| `play_window.py` | Human play in a pygame window (same engine and telemetry); `--demo` plays by itself for testing |
 
 **Seeds:** 0–1999 training (tables, tuning, bandit learning), 50000+ validation (bandit exploration strength), 100000–100999 final director test, 200000+ failure-predictor test. Nothing was tuned on test seeds.
 
@@ -69,6 +78,8 @@ python play.py --controller rule            # play it yourself (fixed, random, r
 - **Bandit arms = difficulty × Walt mode (12) + difficulty only in the finale (3), room picked by threat to match the difficulty, instead of every room × difficulty × mode (~228)**, because there would be far too little data per arm.
 - **Logistic regression kept as the main failure predictor instead of gradient boosting**, because both reach the same AUC (0.93) and the simpler model is easier to explain.
 - **LSTM predictor cut** (first item on the cut list): gradient boosting already added nothing over a straight-line model, so a sequence model was very unlikely to change the conclusion, and it would have needed PyTorch.
+- **LLM answers made repeatable (temperature 0, fixed seed, cache) instead of sampling**, so every experiment can be re-run with identical results and without new model work.
+- **Game window drawn with simple shapes in code instead of downloaded sprites**, so there are no image files or licence questions. Charge-ups are shown by an orange glow, shaking and a "!" for everyone; Walt's "DEFEND!" bubble and the flashing Defend button only appear in `hint` mode, otherwise the window would give every player the hint for free.
 - **No extra "guard" help mode (Walt fights only when the player's HP is low) instead of a 5th mode**, because `fight` already works as a rescue (beginner deaths per room 0.21 with `stay_back` vs 0.04 with `fight`, random director, 500 runs per bot type), the main balance problem is rooms being *too easy*, not too hard, and an automatic in-room rescue would do part of the director's job for it, which blurs the comparison between directors. A 5th mode would also grow the bandit's choices from 12 to 15. Walt can still be *shown* stepping in during `fight`/`heal` in the pygame panel.
 
 ## Current balance (fixed director, 500 runs per bot type, 19 Oct, after balancing)
@@ -97,4 +108,22 @@ Share of rooms in band:
 - **About half of the bandit's gain comes from Walt's `heal` mode** (94% of its training choices). A non-adaptive director that always uses normal + heal already reaches 66.9%, more than the rule director. The rest (66.9% → 75.7%) is real adaptation: hard + heal for strong players, normal + heal for the others.
 - The bandit learns fast: about 62% in its first 50 training runs, above the rule director after ~100 runs, ~77% by 8,000 runs (`figures/bandit_learning_curve.png`).
 - Failure predictor (new seeds): AUC 0.93 on random-director games, 0.84 on rule-director games, well calibrated (predicted 12.0% vs actual 11.8% failures). Expected HP loss of the chosen room is by far the strongest input; the skill estimate is second.
+
+### LLM directors (test seeds 100000–100024, 25 runs per bot type)
+
+The LLM test is smaller because the language model overheats the laptop (decided before any test result was seen). All directors play exactly the same 100 runs.
+
+| Bot | fixed | rule | bandit | llm | llm_risk | predictor |
+|---|---|---|---|---|---|---|
+| beginner | 48% | 53% | 73% | 37% | 71% | 72% |
+| rage_quitter | 56% | 67% | 80% | 38% | 75% | 82% |
+| average | 60% | 65% | 75% | 42% | 81% | 82% |
+| expert | 53% | 64% | 78% | 42% | 79% | 79% |
+| **all** | **54.3%** | **62.2%** | **76.4%** | **39.9%** | **76.5%** | **78.5%** |
+| beginners escaping | 52% | 76% | 100% | 8% | 72% | 96% |
+
+- **Plain LLM (`llm`, llama3.2 3B): worst director, below random.** 0% invalid answers and 0 crashes, but it follows story logic instead of the goal: easy rooms early, hard later, always a hard finale ("Walt's final challenge"), never `heal`, and the same choices for every player type.
+- **`llm_risk`** (the LLM gets the 6 options with the highest predicted in-band chance, with numbers) ties the bandit (76.5% vs 76.4%). The prompt was developed on training seeds 1500–1524; one fix was needed there (the model chose "hard" in the finale for drama even when the numbers said 90% too hard).
+- **`predictor`** (same numbers, always option 1, no LLM) is the best director: 78.5% (also 78.5% on 1000 runs per bot type), beginners escape 96%. So the gain comes from the prediction model, and the LLM's own choices slightly lower the result. This ablation was added after the LLM test.
+
 - All results come from simulated bots. The bots model players, they are not real players.

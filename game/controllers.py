@@ -258,5 +258,16 @@ class LLMRiskController(LLMController):
         self.died_last_room = row["deaths"] > 0
 
 
+class PredictorController(LLMRiskController):
+    """Ablation of llm_risk without the language model: always takes option 1 of the scored list
+    (the highest predicted in-band chance). Shows how much of llm_risk's result comes from the
+    prediction model and how much from the LLM's own choice. No Ollama needed."""
+    name = "predictor"
+
+    def decide(self, state):
+        best = self.score_options(state)[0]
+        return {"beat_id": best["beat_id"], "difficulty": best["difficulty"], "help_mode": best["help_mode"]}
+
+
 CONTROLLERS = {c.name: c for c in [FixedController, RandomController, RuleController,
-                                   BanditController, LLMController, LLMRiskController]}
+                                   BanditController, LLMController, LLMRiskController, PredictorController]}
