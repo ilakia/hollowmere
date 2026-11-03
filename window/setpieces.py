@@ -125,15 +125,33 @@ def ring_toss(s, cx, ctx, font):
 
 
 def ferris_base(s, cx, ctx, font):
-    pygame.draw.polygon(s, METAL, [(cx - 120, GROUND_Y), (cx, GROUND_Y - 260), (cx + 120, GROUND_Y)], 6)
-    pygame.draw.circle(s, METAL, (cx, GROUND_Y - 260), 14)
-    for i in range(3):                                                                    # cars swinging overhead
-        x = cx - 160 + i * 160
-        swing = int(8 * math.sin(ctx["t"] * 1.5 + i))
-        pygame.draw.line(s, METAL, (x, 140), (x + swing, 170), 3)
-        pygame.draw.rect(s, (180, 60, 80), (x - 26 + swing, 170, 52, 34), border_radius=6)
-    pygame.draw.rect(s, (60, 50, 60), (cx - 160, GROUND_Y - 30, 320, 30))               # loading platform
-    label(s, "THE BIG WHEEL", cx - 200, GROUND_Y - 120, (255, 210, 120), font)
+    """A real turning ferris wheel: rim with blinking bulbs, spokes, gondolas that hang straight down."""
+    hub = (cx, GROUND_Y - 150)
+    radius = 130
+    for side in (-1, 1):                                                                  # A-frame legs
+        pygame.draw.line(s, METAL, hub, (cx + side * 95, GROUND_Y), 8)
+    pygame.draw.line(s, METAL, (cx - 60, GROUND_Y - 60), (cx + 60, GROUND_Y - 60), 5)
+    turn = ctx["t"] * 0.25                                                                # slow rotation
+    pygame.draw.circle(s, (170, 60, 90), hub, radius, 5)
+    pygame.draw.circle(s, (170, 60, 90), hub, radius - 18, 2)
+    for spoke in range(16):
+        a = turn + spoke * math.pi / 8
+        rim = (hub[0] + radius * math.cos(a), hub[1] + radius * math.sin(a))
+        pygame.draw.line(s, (150, 150, 165), hub, rim, 2)
+        lit = (spoke + int(ctx["t"] * 4)) % 3 == 0                                       # chasing lights
+        pygame.draw.circle(s, (255, 230, 140) if lit else (120, 90, 60), (int(rim[0]), int(rim[1])), 4)
+    for car in range(8):                                                                  # gondolas
+        a = turn + car * math.pi / 4
+        x = hub[0] + radius * math.cos(a)
+        y = hub[1] + radius * math.sin(a)
+        pygame.draw.line(s, METAL, (x, y), (x, y + 12), 2)
+        color = ((220, 70, 90), (70, 150, 220), (240, 200, 70), (110, 200, 120))[car % 4]
+        pygame.draw.rect(s, color, (x - 15, y + 12, 30, 20), border_radius=6)
+        pygame.draw.rect(s, (40, 30, 50), (x - 10, y + 15, 20, 7))
+    pygame.draw.circle(s, METAL, hub, 14)
+    pygame.draw.circle(s, (255, 220, 120), hub, 6)
+    pygame.draw.rect(s, (60, 50, 60), (cx - 150, GROUND_Y - 22, 300, 22))              # loading platform
+    label(s, "THE BIG WHEEL", cx + 185, GROUND_Y - 60, (255, 210, 120), font)
 
 
 # ---------------------------------------------------------------- zone 2: The Funhouse
@@ -190,21 +208,55 @@ def tilted_room(s, cx, ctx, font):
 
 
 def laughing_stage(s, cx, ctx, font):
-    pygame.draw.rect(s, WOOD, (cx - 210, GROUND_Y - 40, 420, 40))
+    """Laughing Lady: a giant animatronic lady bust on a stage. Curly red hair, lipstick, pearls,
+    earrings, a polka-dot dress; she rocks from side to side and her mouth and eyes laugh."""
+    pygame.draw.rect(s, WOOD, (cx - 220, GROUND_Y - 40, 440, 40))
     for side in (-1, 1):                                                                  # red curtains
         for i in range(5):
-            x = cx + side * (190 - i * 16)
-            pygame.draw.rect(s, (150 - i * 10, 20, 40), (x - 9, GROUND_Y - 260, 18, 220))
-    pygame.draw.rect(s, (120, 20, 40), (cx - 210, GROUND_Y - 270, 420, 30))
-    beam = pygame.Surface((300, 300), pygame.SRCALPHA)                                    # spotlight
-    pygame.draw.polygon(beam, (255, 240, 180, 40), [(150, 0), (60, 300), (240, 300)])
-    s.blit(beam, (cx - 150, GROUND_Y - 300))
-    mouth = 8 + int(8 * abs(math.sin(ctx["t"] * 6)))                                      # the laughing lady
-    pygame.draw.circle(s, (240, 225, 210), (cx, GROUND_Y - 150), 34)
-    pygame.draw.circle(s, DARK, (cx - 12, GROUND_Y - 158), 5)
-    pygame.draw.circle(s, DARK, (cx + 12, GROUND_Y - 158), 5)
-    pygame.draw.ellipse(s, (150, 20, 30), (cx - 14, GROUND_Y - 140, 28, mouth))
-    pygame.draw.rect(s, (90, 40, 110), (cx - 30, GROUND_Y - 116, 60, 76))
+            x = cx + side * (200 - i * 16)
+            pygame.draw.rect(s, (150 - i * 10, 20, 40), (x - 9, GROUND_Y - 290, 18, 250))
+    pygame.draw.rect(s, (120, 20, 40), (cx - 220, GROUND_Y - 300, 440, 30))
+    beam = pygame.Surface((320, 300), pygame.SRCALPHA)                                    # spotlight
+    pygame.draw.polygon(beam, (255, 240, 180, 35), [(160, 0), (40, 300), (280, 300)])
+    s.blit(beam, (cx - 160, GROUND_Y - 300))
+    laugh = abs(math.sin(ctx["t"] * 7))                                                   # 0 = closed, 1 = open
+    rock = int(10 * math.sin(ctx["t"] * 3))                                               # she rocks side to side
+    hx, hy = cx + rock, GROUND_Y - 175
+    skin, lips, hair = (245, 210, 190), (200, 30, 60), (190, 70, 40)
+    # dress and shoulders
+    pygame.draw.polygon(s, (200, 40, 70), [(cx - 95, GROUND_Y - 40), (cx - 70, GROUND_Y - 120),
+                                           (cx + 70, GROUND_Y - 120), (cx + 95, GROUND_Y - 40)])
+    for dot_x, dot_y in ((-50, -70), (0, -90), (45, -65), (-20, -55), (30, -100), (-60, -100)):
+        pygame.draw.circle(s, (255, 230, 235), (cx + dot_x, GROUND_Y + dot_y), 6)
+    for side in (-1, 1):                                                                  # arms holding her belly
+        pygame.draw.line(s, skin, (cx + side * 70, GROUND_Y - 112), (cx + side * 95, GROUND_Y - 70), 14)
+        pygame.draw.line(s, skin, (cx + side * 95, GROUND_Y - 70), (cx + side * 30, GROUND_Y - 62), 12)
+    pygame.draw.rect(s, skin, (hx - 14, hy + 40, 28, 26))                                 # neck
+    for i in range(7):                                                                    # pearl necklace
+        pygame.draw.circle(s, (250, 250, 240), (hx - 30 + i * 10, hy + 66 + abs(i - 3) * -2 + 6), 5)
+    # big curly hair behind the face
+    for dx, dy, r in ((-48, -10, 26), (48, -10, 26), (-38, -40, 28), (38, -40, 28), (0, -55, 32),
+                      (-55, 20, 22), (55, 20, 22)):
+        pygame.draw.circle(s, hair, (hx + dx, hy + dy), r)
+    pygame.draw.ellipse(s, skin, (hx - 44, hy - 50, 88, 104))                             # face
+    for side in (-1, 1):
+        pygame.draw.circle(s, (255, 200, 60), (hx + side * 46, hy + 18), 7)               # gold earrings
+        pygame.draw.circle(s, (240, 150, 150), (hx + side * 24, hy + 14), 9)              # rosy cheeks
+        ex = hx + side * 18
+        pygame.draw.arc(s, (40, 25, 30), (ex - 11, hy - 16, 22, 16), 0, math.pi, 3)      # laughing, squeezed eyes
+        for lash in range(3):
+            pygame.draw.line(s, (40, 25, 30), (ex - 8 + lash * 8, hy - 14), (ex - 10 + lash * 10, hy - 22), 2)
+        pygame.draw.arc(s, hair, (ex - 13, hy - 32, 26, 12), 0, math.pi, 3)              # eyebrows
+    mouth_h = 10 + int(28 * laugh)
+    pygame.draw.ellipse(s, lips, (hx - 24, hy + 22, 48, mouth_h))                        # lipstick mouth
+    pygame.draw.ellipse(s, (90, 10, 30), (hx - 17, hy + 27, 34, max(4, mouth_h - 12)))
+    pygame.draw.rect(s, (255, 255, 250), (hx - 15, hy + 26, 30, 6))                      # teeth
+    if laugh > 0.6:                                                                       # "HA HA" floats up
+        for i, word in enumerate(("HA!", "HA!")):
+            image = font.render(word, True, (255, 230, 120))
+            rise = int((ctx["t"] * 40 + i * 30) % 60)
+            s.blit(image, (hx + 60 + i * 30, hy - 40 - rise))
+    label(s, "LAUGHING LADY", cx, GROUND_Y - 312, (255, 200, 200), font)
 
 
 def clown_alley(s, cx, ctx, font):

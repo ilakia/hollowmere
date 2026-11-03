@@ -69,6 +69,7 @@ APPEAR_SECONDS = 1.6     # the ghosts fade in, then the fight starts
 INTRO_LINE = "Name's Walt. Stick with me, I know the way out."
 GATE_LINE = "The gate is just ahead. Nearly out, kid."
 REVEAL_LINE = "I never left this park, kid. Neither will you."
+FAREWELL_LINE = "Not bad, kid. Not bad at all. Go on. Don't look back."
 DEFEND_LINE = "It's glowing, DEFEND!"
 HEAL_LINE = "You're hurt. Hold still, kid."
 WALT_HITS = ["Take that!", "Back off!", "Not my kid!", "Hah!"]
@@ -97,6 +98,15 @@ def draw_arrow(surface, x, y, color):
     """A right-pointing arrow (drawn, because the default font has no arrow character)."""
     pygame.draw.rect(surface, color, (x - 40, y - 8, 40, 16))
     pygame.draw.polygon(surface, color, [(x, y - 22), (x + 30, y), (x, y + 22)])
+
+
+def draw_beam(surface, start, end):
+    """Walt's flashlight beam: a soft yellow cone from his hand to the target."""
+    beam = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    flicker = 40 + int(15 * math.sin(time.time() * 20))
+    pygame.draw.polygon(beam, (255, 235, 150, flicker), [start, (end[0], end[1] - 55), (end[0], end[1] + 55)])
+    pygame.draw.circle(beam, (255, 235, 150, flicker), end, 55)
+    surface.blit(beam, (0, 0))
 
 
 def ghost_x(index, count):
@@ -137,7 +147,7 @@ class GameWindow:
         self.sounds = SoundBank(enabled=sound_on and demo_dir is None)
         spoken = ([INTRO_LINE, DEFEND_LINE, HEAL_LINE, GATE_LINE] +      # most needed first
                   list(WALT_BUBBLE.values()) + WALT_HITS + TRAVEL_LINES)
-        self.voice = WaltVoice(spoken, [REVEAL_LINE], enabled=sound_on and demo_dir is None)
+        self.voice = WaltVoice(spoken, [REVEAL_LINE, FAREWELL_LINE], enabled=sound_on and demo_dir is None)
         self.director_name = director_name
         self.room_label = ""
         self.help_mode = None
@@ -627,6 +637,10 @@ class WindowPolicy(HumanPolicy):
                 ghost_marks.append((kind, hp, x, glowing))
             w.fog.draw(c, dt)
             w.scenery.draw_front(c, w.zone, lights, finale=w.is_finale)
+            if charging and view["warning"] and not w.is_finale:     # hint mode: Walt lights up the danger
+                for kind, hp, x, glowing in ghost_marks:
+                    if glowing:
+                        draw_beam(c, (walt_x + 40, GROUND_Y - 62), (x, GROUND_Y - 60))
 
             w.draw_top_bar(c)
             draw_bar(c, 110, GROUND_Y + 12, 120, 12, view["hp"] / view["max_hp"])
@@ -786,6 +800,79 @@ class WindowPolicy(HumanPolicy):
         self.window.popups = []
 
 
+def draw_big_gate(c, cx, openness, font):
+    """The park's exit: stone pillars, an iron arch with the park's name, two barred doors.
+    openness 0 = closed, 1 = wide open (the doors turn inwards and look narrower)."""
+    top = GROUND_Y - 290
+    for side in (-1, 1):                                                       # stone pillars with lamps
+        px = cx + side * 190
+        pygame.draw.rect(c, (70, 80, 85), (px - 28, top + 20, 56, GROUND_Y - top - 20))
+        pygame.draw.rect(c, (95, 105, 110), (px - 36, top + 10, 72, 18))
+        pygame.draw.circle(c, (255, 230, 160), (px, top), 10)
+    pygame.draw.arc(c, (40, 45, 50), (cx - 165, top - 40, 330, 140), 0, math.pi, 12)   # iron arch
+    sign = font.render("HOLLOWMERE PARK", True, (230, 220, 190))
+    c.blit(sign, sign.get_rect(center=(cx, top - 4)))
+    door_width = int(160 * (1 - 0.85 * openness))                             # doors swing open
+    for side in (-1, 1):
+        hinge = cx + side * 162
+        left = hinge if side < 0 else hinge - door_width
+        door = pygame.Rect(left, top + 40, door_width, GROUND_Y - top - 40)
+        for i in range(0, max(door_width, 1), 14):                             # iron bars
+            pygame.draw.line(c, (30, 32, 38), (door.x + i, door.y), (door.x + i, door.bottom), 4)
+        pygame.draw.line(c, (30, 32, 38), (door.x, door.y + 20), (door.right, door.y + 20), 5)
+        pygame.draw.line(c, (30, 32, 38), (door.x, door.bottom - 30), (door.right, door.bottom - 30), 5)
+
+
+def ending_scene(w, outcome):
+    """Short cinematic before the end card. Escaped: the big gate swings open at dawn, you walk
+    out and Walt fades into the light. Otherwise: the lights go out one by one. Space skips."""
+    w.zone = 4
+    w.is_finale = False
+    duration = 9.0 if outcome == "escaped" else 4.0
+    elapsed = 0.0
+    frame = 0
+    if outcome == "escaped":
+        w.voice.speak(FAREWELL_LINE, ghost=True, muted=w.sounds.muted)
+    while elapsed < duration:
+        dt = w.tick()
+        elapsed += dt
+        if w.demo_dir is None and pygame.key.get_pressed()[pygame.K_SPACE] and elapsed > 0.5:
+            break
+        c = w.canvas
+        w.scenery.draw_back(c, 4)
+        if outcome == "escaped":
+            dawn = min(1.0, elapsed / 6.0)
+            glow = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)               # the sky turns to dawn
+            glow.fill((255, 170, 110, int(110 * dawn)))
+            c.blit(glow, (0, 0))
+            draw_glow(c, 560, GROUND_Y - 120, 220, (255, 200, 140), strength=int(10 + 25 * dawn))
+            openness = min(1.0, max(0.0, (elapsed - 1.0) / 2.0))
+            draw_big_gate(c, 560, openness, w.font)
+            walk = min(1.0, max(0.0, (elapsed - 2.5) / 5.0))
+            player_x = int(200 + 520 * walk)
+            alpha = 255 if player_x < 560 else max(0, int(255 * (1 - (player_x - 560) / 160)))
+            w.draw_sprite("player", player_x, GROUND_Y, alpha=alpha, dy=-int(abs(math.sin(elapsed * 8)) * 6 * (0 < walk < 1)))
+            walt_alpha = max(0, int(255 * (1 - elapsed / 7.0)))                 # Walt fades into the light
+            w.draw_sprite("walt_ghost", 120, GROUND_Y, alpha=walt_alpha)
+            if int(elapsed * 10) % 3 == 0:
+                w.particles.rise(120, GROUND_Y - 60, (255, 230, 170), count=2)
+            w.particles.draw(c, dt)
+            w.scenery.draw_front(c, 4, [(560, GROUND_Y - 100, 320, (255, 210, 150))])
+            if elapsed > 4:
+                draw_text(c, "Dawn.", w.font_big, (255, 230, 190), WIDTH // 2, 175, center=True)
+        else:
+            darkness = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            darkness.fill((0, 0, 0, min(255, int(255 * elapsed / 3.0))))         # the lights go out
+            w.draw_sprite("player", 300, GROUND_Y)
+            w.scenery.draw_front(c, 4, [], finale=True)
+            c.blit(darkness, (0, 0))
+            draw_text(c, "The lights go out...", w.font_big, COLORS["damage"], WIDTH // 2, 200, center=True)
+        for y in (0, HEIGHT - 50):                                                # cinema bars
+            pygame.draw.rect(c, (0, 0, 0), (0, y, WIDTH, 50))
+        w.present(capture=frame % 15 == 0)
+        frame += 1
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--controller", default="rule", choices=WINDOW_DIRECTORS, help="pre-selected in the menu")
@@ -816,6 +903,7 @@ def main():
 
     outcome = rows[-1]["run_outcome"]
     window.sounds.play("win" if outcome == "escaped" else "death")
+    ending_scene(window, outcome)
     window.room_label = "The end"
     paragraphs = [(ENDINGS[outcome], COLORS["text"])]
     if controller.last_result:
