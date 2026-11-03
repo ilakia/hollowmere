@@ -90,7 +90,9 @@ class GameWindow:
         pygame.init()
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
         pygame.display.set_caption("Hollowmere")
-        self.canvas = pygame.Surface((WIDTH, HEIGHT))     # the scene is drawn here, then shaken onto the screen
+        # the scene is drawn here, then shaken onto the screen. Depth 24 = no transparency channel: on a Mac the
+        # display format has one, and without this the whole scene showed up black in the real window
+        self.canvas = pygame.Surface((WIDTH, HEIGHT), 0, 24)
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont(None, 26)
         self.font_small = pygame.font.SysFont(None, 22)
