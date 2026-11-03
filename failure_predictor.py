@@ -21,22 +21,19 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import brier_score_loss, roc_auc_score
 
 from game import config as C
-from game.controllers import THREAT_ORDER
+from game.risk import FEATURES, option_features, save_band_model
 from game.skill import SkillEstimator, load_expected_table
 from game.story import Story
 from simulate import simulate
 
 SEED = 42
-DIFFICULTY_ORDER = ["easy", "normal", "hard"]
-FEATURES = ["room_index", "hp_share", "potions_left", "deaths_so_far", "skill_estimate",
-            "last_hp_lost", "died_last_room", "threat", "difficulty_level",
-            "help_stay_back", "help_hint", "help_heal", "help_fight", "expected_hp_lost"]
 
 
 def build_features(df):
     """Turn room rows into one feature row per room, using only information from BEFORE the room.
     Input:  df = room rows from simulate() or data/sim_runs.csv
-    Output: (X, y) = feature table and label (1 = room failed, 0 = not failed)"""
+    Output: (X, y, band) = feature table, label (1 = room failed, 0 = not failed),
+            and the room's band (too_easy / in_band / too_hard) for the band model"""
     table = load_expected_table()
     threat_of = {b["id"]: b["threat"] for b in Story().beats}
     df = df.sort_values(["run_id", "room_index"])
@@ -49,23 +46,14 @@ def build_features(df):
         died_last_room = 0
         for room in run.to_dict("records"):
             key = (room["beat_id"], room["difficulty"], room["help_mode"])
-            rows.append({
-                "room_index": room["room_index"],
-                "hp_share": room["hp_start"] / C.PLAYER_MAX_HP,
-                "potions_left": potions_left,
-                "deaths_so_far": deaths_so_far,
-                "skill_estimate": estimator.estimate,       # estimate BEFORE this room
-                "last_hp_lost": last_hp_lost,
-                "died_last_room": died_last_room,
-                "threat": THREAT_ORDER.index(threat_of[room["beat_id"]]),
-                "difficulty_level": DIFFICULTY_ORDER.index(room["difficulty"]),
-                "help_stay_back": int(room["help_mode"] == "stay_back"),
-                "help_hint": int(room["help_mode"] == "hint"),
-                "help_heal": int(room["help_mode"] == "heal"),
-                "help_fight": int(room["help_mode"] == "fight"),
-                "expected_hp_lost": table.get(key, estimator.fallback),
-                "failed": int(room["band"] == "too_hard"),
-            })
+            features = option_features(
+                room["room_index"], room["hp_start"], potions_left, deaths_so_far,
+                estimator.estimate,                          # estimate BEFORE this room
+                last_hp_lost, died_last_room, threat_of[room["beat_id"]],
+                room["difficulty"], room["help_mode"], table.get(key, estimator.fallback))
+            features["failed"] = int(room["band"] == "too_hard")
+            features["band"] = room["band"]
+            rows.append(features)
             # only now, after the room, update what the director knows
             estimator.update(room)
             potions_left -= room["potions_used"]
@@ -73,7 +61,7 @@ def build_features(df):
             last_hp_lost = room["hp_lost_ratio"]
             died_last_room = int(room["deaths"] > 0)
     out = pd.DataFrame(rows)
-    return out[FEATURES], out["failed"]
+    return out[FEATURES], out["failed"], out["band"]
 
 
 def evaluate(name, model, X, y):
@@ -95,14 +83,15 @@ def main():
     # training data: random director only, seeds 0-999
     train = pd.read_csv(args.data)
     train = train[train["controller"] == "random"]
-    X_train, y_train = build_features(train)
+    X_train, y_train, band_train = build_features(train)
 
     # test data: new seeds, generated now, never seen in training or tuning
     profiles = ["beginner", "rage_quitter", "average", "expert"]
     test = simulate(["random", "rule"], profiles, args.test_games, args.test_seed_start)
     tests = {}
     for ctrl in ["random", "rule"]:
-        tests[ctrl] = build_features(test[test["controller"] == ctrl])
+        X_test, y_test, _ = build_features(test[test["controller"] == ctrl])
+        tests[ctrl] = (X_test, y_test)
 
     print(f"Training rooms: {len(y_train)} (fail rate {y_train.mean():.3f}), "
           f"test seeds {args.test_seed_start}-{args.test_seed_start + args.test_games - 1}\n")
@@ -138,6 +127,13 @@ def main():
     importance = pd.Series(imp.importances_mean, index=FEATURES).sort_values(ascending=False)
     print("\nFeature importance (AUC drop when the feature is shuffled, random-director test set):")
     print(importance.round(3).to_string())
+
+    # band model for the LLM director's risk-informed prompt: predicts too_easy / in_band / too_hard
+    # (multinomial logistic regression, same features, same training data)
+    band_model = LogisticRegression(max_iter=1000)
+    band_model.fit(X_train, band_train)
+    save_band_model(band_model)
+    print("\nband model (classes " + ", ".join(band_model.classes_) + ") saved -> data/band_model.joblib")
 
 
 if __name__ == "__main__":

@@ -8,13 +8,17 @@ Every controller has the same two methods, so they can be swapped freely:
   decide(state)                 -> decision dict
   observe(state, decision, row) -> learn from what happened (only the bandit will use it)
 
-Built so far: Fixed (baseline), Random (for collecting unbiased training data), Rule, Bandit.
-To come: LLMController.
+Built: Fixed (baseline), Random (for collecting unbiased training data), Rule, Bandit, LLM.
 """
 from pathlib import Path
 
+import pandas as pd
+
 from . import config as C
 from .bandit import ARMS, CONTEXT_NAMES, FINALE_ARMS, LinUCB, make_context
+from .llm import (RISK_FINALE_LINE, RISK_SYSTEM_PROMPT, SHORTLIST_SIZE, LLMClient, build_prompt,
+                  describe_options)
+from .risk import FEATURES, load_band_model, option_features
 from .skill import SkillEstimator, load_expected_table
 
 
@@ -173,4 +177,86 @@ class BanditController(Controller):
         self.died_last_room = row["deaths"] > 0
 
 
-CONTROLLERS = {c.name: c for c in [FixedController, RandomController, RuleController, BanditController]}
+class LLMController(Controller):
+    """A local language model (Ollama, game/llm.py) reads a plain-text description of the
+    situation and answers with a JSON decision and a one-sentence reason. It gets the same
+    information as the other directors (HP, potions, skill estimate, last result, allowed rooms)
+    and a short description of the game, but no hand-written rules and no training.
+    list_valid_beats = False is the ablation: the model is not told which rooms are allowed."""
+    name = "llm"
+    client = None             # one LLMClient (with its cache) shared by all runs
+    list_valid_beats = True
+
+    def __init__(self, rng=None):
+        super().__init__(rng)
+        if LLMController.client is None:
+            LLMController.client = LLMClient()
+        self.skill = SkillEstimator(load_expected_table())
+        self.last_band = None
+
+    def decide(self, state):
+        prompt = build_prompt(state, self.skill.estimate, self.last_band, LLMController.list_valid_beats)
+        answer = LLMController.client.ask(prompt)
+        decision = {"beat_id": answer.get("beat_id"), "difficulty": answer.get("difficulty"),
+                    "help_mode": answer.get("help_mode")}
+        return decision     # engine.validate_decision repairs and flags anything invalid
+
+    def observe(self, state, decision, row):
+        self.skill.update(row)
+        self.last_band = row["band"]
+
+
+class LLMRiskController(LLMController):
+    """The LLM director with numbers: before asking, every allowed (attraction, difficulty, Walt mode)
+    is scored by the band model (game/risk.py, trained on random-director data) for THIS player,
+    and the SHORTLIST_SIZE options with the highest in-band chance are listed in the prompt.
+    The model still makes the final choice and gives a reason."""
+    name = "llm_risk"
+
+    def __init__(self, rng=None):
+        super().__init__(rng)
+        self.band_model = load_band_model()
+        self.table = load_expected_table()
+        self.last_hp_lost = 0.0
+        self.died_last_room = False
+
+    def score_options(self, state):
+        """Output: all allowed options with predicted in_band / too_easy / too_hard shares, best first."""
+        if state["is_finale"]:
+            help_modes = [C.FINALE_HELP_MODE]
+        else:
+            help_modes = C.HELP_MODES
+        options, rows = [], []
+        for beat in state["valid_beats"]:
+            for difficulty in C.DIFFICULTY:
+                for help_mode in help_modes:
+                    expected = self.table.get((beat["id"], difficulty, help_mode), self.skill.fallback)
+                    rows.append(option_features(
+                        state["room_index"], state["hp"], state["potions"], state["deaths_total"],
+                        self.skill.estimate, self.last_hp_lost, self.died_last_room,
+                        beat["threat"], difficulty, help_mode, expected))
+                    options.append({"beat_id": beat["id"], "difficulty": difficulty, "help_mode": help_mode})
+        probabilities = self.band_model.predict_proba(pd.DataFrame(rows, columns=FEATURES))
+        classes = list(self.band_model.classes_)
+        for option, p in zip(options, probabilities):
+            for band in ["in_band", "too_easy", "too_hard"]:
+                option[band] = p[classes.index(band)]
+        options.sort(key=lambda o: o["in_band"], reverse=True)
+        return options
+
+    def decide(self, state):
+        shortlist = self.score_options(state)[:SHORTLIST_SIZE]
+        prompt = build_prompt(state, self.skill.estimate, self.last_band, finale_line=RISK_FINALE_LINE)
+        prompt = prompt + "\n" + describe_options(shortlist)
+        answer = LLMController.client.ask(prompt, RISK_SYSTEM_PROMPT, tag="|risk")
+        return {"beat_id": answer.get("beat_id"), "difficulty": answer.get("difficulty"),
+                "help_mode": answer.get("help_mode")}
+
+    def observe(self, state, decision, row):
+        super().observe(state, decision, row)
+        self.last_hp_lost = row["hp_lost_ratio"]
+        self.died_last_room = row["deaths"] > 0
+
+
+CONTROLLERS = {c.name: c for c in [FixedController, RandomController, RuleController,
+                                   BanditController, LLMController, LLMRiskController]}
