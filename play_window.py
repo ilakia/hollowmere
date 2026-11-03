@@ -1,20 +1,27 @@
 """
-Play Hollowmere in a game window (pygame) instead of the terminal.
+Play Hollowmere in a game window (pygame): pixel-art characters, effects, sound, a park map,
+a title menu and a timing bar for attacks.
 
-It uses the SAME engine, directors and telemetry as play.py, so a game played here is saved in
-data/human_runs.csv exactly like a terminal game (useful for the playtest). Only the drawing is new.
-Everything is drawn with simple shapes in code, so there are no image files.
+It uses the SAME engine and directors as play.py. Only two things differ from the terminal game:
+- Your hit chance comes from the timing bar (40% for a bad press up to 95% in the sweet spot)
+  instead of a fixed 75%. The engine is unchanged: the window just sets your accuracy before
+  each attack.
+- Games are saved to data/window_runs.csv (with an extra timing_score column), so they are never
+  mixed with the fixed-aim games in data/human_runs.csv.
+Everything is drawn and generated in code (window/ folder), so there are no image or sound files.
 
-  python play_window.py                     # fixed director
-  python play_window.py --controller rule   # fixed, random, rule or bandit
+  python play_window.py                      # title menu: pick the director there
+  python play_window.py --controller rule    # start with this director selected
+  python play_window.py --no-sound
 
-Controls: A attack, D defend, P potion (or click the buttons). Space or Enter to continue.
-Y / N after a death. Closing the window ends the game without saving it.
+Controls: A attack (then Space to stop the timing bar), D defend, P potion, M mute,
+Space/Enter continue, Y/N after a death. Closing the window ends the game without saving it.
 
   python play_window.py --demo figures/screens   # plays by itself and saves screenshots (for testing)
 """
 import argparse
 import math
+import os
 import random
 import sys
 import time
@@ -28,23 +35,25 @@ from game import config as C
 from game.controllers import CONTROLLERS
 from game.engine import play_run
 from game.story import Story
-from play import WALT_LINES, HumanPolicy
+from play import HumanPolicy
+from window.art import (COLORS, HEIGHT, WIDTH, Button, draw_bar, draw_bubble, draw_glow, draw_living_background,
+                        draw_text, load_sprites, make_background, wrap_text)
+from window.effects import Flashes, Fog, Particles, Shake, vignette
+from window.park_map import draw_park_map
+from window.sound import SoundBank
 
-WIDTH, HEIGHT = 960, 540
 FPS = 30
 POPUP_SECONDS = 1.4
+GROUND_Y = 385
+WINDOW_DIRECTORS = ["fixed", "random", "rule", "bandit", "predictor"]   # no LLM: it overheats the laptop
 
-COLORS = {
-    "sky_top": (12, 10, 30), "sky_bottom": (40, 20, 55), "ground": (25, 22, 30),
-    "text": (235, 230, 220), "dim_text": (160, 150, 170), "panel": (20, 18, 32),
-    "player": (70, 190, 200), "walt": (150, 140, 120), "flashlight": (255, 230, 140),
-    "hp_good": (90, 200, 110), "hp_low": (220, 90, 80), "bar_back": (60, 55, 70),
-    "damage": (240, 90, 80), "heal": (110, 230, 140), "glow": (190, 120, 255), "charge": (255, 190, 60),
-    "button": (55, 45, 80), "button_hover": (85, 70, 120), "potion": (200, 60, 120),
-    "in_band": (110, 230, 140), "too_easy": (120, 170, 240), "too_hard": (240, 90, 80),
-}
+# Timing bar: hit chance = TIMING_BASE + TIMING_RANGE * timing score (score 1 = sweet spot, 0 = edge).
+# A random press averages a score of about 0.5, i.e. ~67% hit chance, close to the old fixed 75%.
+TIMING_BASE = 0.40
+TIMING_RANGE = 0.55
+TIMING_SPEED = 1.1               # marker sweeps per second (slow enough to learn, fast enough to matter)
+
 BAND_TEXT = {"in_band": "in band (a good fight)", "too_easy": "too easy", "too_hard": "too hard"}
-# Walt's speech bubble at the start of a room (short versions; the heal line itself appears when he heals)
 WALT_BUBBLE = {
     "stay_back": "You've got this. I'll keep watch.",
     "hint": "Watch the big ones. Duck when they glow.",
@@ -58,263 +67,213 @@ ENDINGS = {
 }
 
 
-# ---------------------------------------------------------------- small drawing helpers
 def close_game():
     """The window was closed: stop everything (the game is not saved)."""
     pygame.quit()
     sys.exit(0)
 
 
-def wrap_text(text, font, max_width):
-    """Split text into lines that fit max_width pixels. Output: list of strings."""
-    lines, line = [], ""
-    for word in text.split():
-        test = (line + " " + word).strip()
-        if font.size(test)[0] <= max_width:
-            line = test
-        else:
-            lines.append(line)
-            line = word
-    if line:
-        lines.append(line)
-    return lines
+def ghost_x(index, count):
+    """Spread up to 4 ghosts evenly over the right side of the screen."""
+    if count <= 1:
+        return 730
+    return int(600 + index * 240 / (count - 1))
 
 
-def draw_text(surface, text, font, color, x, y, center=False):
-    image = font.render(text, True, color)
-    rect = image.get_rect()
-    if center:
-        rect.center = (x, y)
-    else:
-        rect.topleft = (x, y)
-    surface.blit(image, rect)
-
-
-def draw_bar(surface, x, y, width, height, share):
-    """HP bar: green when above 40%, red below."""
-    share = max(0.0, min(1.0, share))
-    color = COLORS["hp_good"] if share > 0.4 else COLORS["hp_low"]
-    pygame.draw.rect(surface, COLORS["bar_back"], (x, y, width, height), border_radius=4)
-    pygame.draw.rect(surface, color, (x, y, int(width * share), height), border_radius=4)
-
-
-def draw_glow(surface, x, y, radius, color, strength=25):
-    """A soft pulsing circle of light behind a figure (transparent layers; strength = opacity per layer)."""
-    pulse = 0.75 + 0.25 * math.sin(time.time() * 6)
-    glow = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
-    for step in range(6):
-        r = int(radius * (1 - step / 7) * pulse)
-        pygame.draw.circle(glow, color + (strength,), (radius, radius), r)
-    surface.blit(glow, (x - radius, y - radius))
-
-
-def draw_bubble(surface, font, text, x, y):
-    """Speech bubble with its tail pointing down to (x, y)."""
-    lines = wrap_text(text, font, 260)
-    height = 12 + 22 * len(lines)
-    box = pygame.Rect(x - 40, y - height - 16, 280, height)
-    pygame.draw.rect(surface, COLORS["text"], box, border_radius=10)
-    pygame.draw.polygon(surface, COLORS["text"], [(x - 10, box.bottom), (x + 10, box.bottom), (x, y)])
-    for i, line in enumerate(lines):
-        draw_text(surface, line, font, COLORS["panel"], box.x + 10, box.y + 6 + 22 * i)
-
-
-class Button:
-    """A clickable rectangle with a label and the keyboard keys that also press it."""
-
-    def __init__(self, name, label, rect, keys, flashing=False):
-        self.name = name
-        self.label = label
-        self.rect = pygame.Rect(rect)
-        self.keys = keys
-        self.flashing = flashing      # True: the border blinks (used for Walt's DEFEND warning)
-
-    def draw(self, surface, font):
-        hover = self.rect.collidepoint(pygame.mouse.get_pos())
-        color = COLORS["button_hover"] if hover else COLORS["button"]
-        pygame.draw.rect(surface, color, self.rect, border_radius=8)
-        if self.flashing and math.sin(time.time() * 10) > 0:
-            pygame.draw.rect(surface, COLORS["charge"], self.rect, width=4, border_radius=8)
-        else:
-            pygame.draw.rect(surface, COLORS["glow"], self.rect, width=2, border_radius=8)
-        draw_text(surface, self.label, font, COLORS["text"], self.rect.centerx, self.rect.centery, center=True)
-
-
-# ---------------------------------------------------------------- figures (simple shapes)
-def draw_player(surface, x, y):
-    pygame.draw.rect(surface, COLORS["player"], (x - 18, y - 40, 36, 60), border_radius=10)
-    pygame.draw.circle(surface, (230, 200, 170), (x, y - 58), 18)
-
-
-def draw_walt(surface, x, y, as_ghost=False):
-    """Walt, the old mechanic with a flashlight. In the finale he is a ghost (pale, glowing)."""
-    coat = (120, 200, 170) if as_ghost else COLORS["walt"]     # no constant glow: it would hide his charge-up
-    pygame.draw.rect(surface, coat, (x - 22, y - 44, 44, 66), border_radius=8)
-    pygame.draw.circle(surface, (200, 230, 215) if as_ghost else (220, 190, 160), (x, y - 62), 18)
-    pygame.draw.rect(surface, (90, 80, 70), (x - 20, y - 82, 40, 8))             # cap
-    pygame.draw.polygon(surface, COLORS["flashlight"] + (0,), [(x + 22, y - 20), (x + 70, y - 40), (x + 70, y)])
-
-
-def draw_ghost(surface, kind, x, y, glowing, mark_font):
-    """wisp = small floating light, animatronic = boxy robot, wraith = tall shadow, walt = boss.
-    glowing = it is charging a big hit: bright orange glow, shaking, and a "!" above it."""
-    if glowing:
-        draw_glow(surface, x, y - 30, 95, COLORS["charge"], strength=45)
-        x = x + int(5 * math.sin(time.time() * 40))         # fast shaking
-        draw_text(surface, "!", mark_font, COLORS["charge"], x, y - 130, center=True)
-    bob = int(4 * math.sin(time.time() * 3 + x))           # gentle floating movement
-    if kind == "wisp":
-        pygame.draw.circle(surface, (170, 220, 255), (x, y - 30 + bob), 16)
-        for dx in (-10, 0, 10):
-            pygame.draw.circle(surface, (170, 220, 255), (x + dx, y - 16 + bob), 6)
-    elif kind == "animatronic":
-        pygame.draw.rect(surface, (150, 100, 60), (x - 24, y - 60, 48, 70), border_radius=6)
-        pygame.draw.circle(surface, (255, 60, 60), (x - 9, y - 42), 5)
-        pygame.draw.circle(surface, (255, 60, 60), (x + 9, y - 42), 5)
-    elif kind == "wraith":
-        pygame.draw.ellipse(surface, (70, 40, 90), (x - 28, y - 90 + bob, 56, 110))
-        pygame.draw.circle(surface, (240, 240, 255), (x - 9, y - 60 + bob), 5)
-        pygame.draw.circle(surface, (240, 240, 255), (x + 9, y - 60 + bob), 5)
-    else:
-        draw_walt(surface, x, y, as_ghost=True)
-
-
-def make_background():
-    """Night sky, distant ferris wheel and a row of fairground lights (drawn once, reused)."""
-    background = pygame.Surface((WIDTH, HEIGHT))
-    for row in range(HEIGHT):
-        share = row / HEIGHT
-        color = [int(COLORS["sky_top"][i] * (1 - share) + COLORS["sky_bottom"][i] * share) for i in range(3)]
-        pygame.draw.line(background, color, (0, row), (WIDTH, row))
-    pygame.draw.circle(background, (50, 40, 65), (780, 200), 120, width=3)      # ferris wheel
-    for spoke in range(8):
-        angle = spoke * math.pi / 4
-        end = (780 + 120 * math.cos(angle), 200 + 120 * math.sin(angle))
-        pygame.draw.line(background, (50, 40, 65), (780, 200), end, 2)
-    pygame.draw.rect(background, COLORS["ground"], (0, 380, WIDTH, HEIGHT - 380))
-    for i in range(16):                                                         # string of lights
-        pygame.draw.circle(background, (255, 200, 120), (30 + i * 60, 60 + int(12 * math.sin(i))), 3)
-    return background
-
-
-# ---------------------------------------------------------------- the window and its screens
+# ---------------------------------------------------------------- the window
 class GameWindow:
-    """Everything the screens share: the window, fonts, what room we are in, Walt's bubble,
-    the floating damage numbers. demo_dir != None: no waiting for input, screenshots instead."""
+    """Everything the screens share: window, fonts, sprites, effects, sound, and what room we are in.
+    demo_dir != None: no waiting for input; the game plays itself and saves screenshots."""
 
-    def __init__(self, director_name, demo_dir=None):
+    def __init__(self, director_name, demo_dir=None, sound_on=True):
         pygame.init()
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
         pygame.display.set_caption("Hollowmere")
+        self.canvas = pygame.Surface((WIDTH, HEIGHT))     # the scene is drawn here, then shaken onto the screen
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont(None, 26)
         self.font_small = pygame.font.SysFont(None, 22)
         self.font_big = pygame.font.SysFont(None, 44)
-        self.font_mark = pygame.font.SysFont(None, 80)      # the "!" above a charging ghost
+        self.font_mark = pygame.font.SysFont(None, 80)
+        self.font_title = pygame.font.SysFont(None, 110)
         self.background = make_background()
+        self.sprites = load_sprites()
+        self.fog = Fog()
+        self.vignette = vignette()
+        self.particles = Particles()
+        self.shake = Shake()
+        self.flashes = Flashes()
+        self.sounds = SoundBank(enabled=sound_on and demo_dir is None)
         self.director_name = director_name
         self.room_label = ""
         self.help_mode = None
         self.difficulty = "normal"
         self.is_finale = False
         self.bubble = ""
-        self.popups = []            # (text, color, x, y, start time)
+        self.popups = []                 # (text, colour, x, y, start time)
+        self.last_frame = time.time()
         self.demo_dir = demo_dir
         self.demo_shots = 0
-        self.demo_choice = None     # what the demo player "presses" on the next screen
+        self.demo_choice = None
 
+    # ---- small shared pieces
     def popup(self, text, color, x, y):
-        # a new number replaces an older one at the same spot, so fast clicking does not stack them
-        self.popups = [p for p in self.popups if (p[2], p[3]) != (x, y)]
+        self.popups = [p for p in self.popups if (p[2], p[3]) != (x, y)]   # newest number wins at one spot
         self.popups.append((text, color, x, y, time.time()))
 
-    def draw_popups(self):
+    def draw_popups(self, surface):
         now = time.time()
         self.popups = [p for p in self.popups if now - p[4] < POPUP_SECONDS]
         for text, color, x, y, start in self.popups:
-            rise = int((now - start) * 30)       # numbers float upwards while they fade out
-            draw_text(self.screen, text, self.font_big, color, x, y - rise, center=True)
+            rise = int((now - start) * 30)                                   # numbers float up as they fade
+            draw_text(surface, text, self.font_big, color, x, y - rise, center=True)
 
+    def draw_top_bar(self, surface):
+        pygame.draw.rect(surface, COLORS["panel"], (0, 0, WIDTH, 40))
+        draw_text(surface, self.room_label, self.font, COLORS["text"], 16, 11)
+        sound = "muted (M)" if self.sounds.muted else "sound on (M)"
+        draw_text(surface, f"director: {self.director_name}   ·   {sound}", self.font_small,
+                  COLORS["dim_text"], WIDTH - 300, 13)
+
+    def draw_sprite(self, name, x, y_bottom, flash=False, flip=False, dy=0):
+        """Draw a sprite standing on the ground at x (its centre). flash = white hit silhouette."""
+        image, white = self.sprites[name]
+        if flash:
+            image = white
+        if flip:
+            image = pygame.transform.flip(image, True, False)
+        self.canvas.blit(image, (x - image.get_width() // 2, y_bottom - image.get_height() + dy))
+
+    # ---- drawing loop
     def wait_for(self, draw_scene, buttons):
-        """Keep drawing the scene until a button is clicked or its key is pressed.
-        Inputs: draw_scene = function that draws the picture, buttons = list of Button
-        Output: the name of the chosen button"""
+        """Keep drawing until a button is clicked or its key is pressed. Output: the button's name.
+        draw_scene(dt) draws the picture onto self.canvas; dt = seconds since the last frame."""
         if self.demo_dir is not None:
             return self.demo_step(draw_scene, buttons)
         while True:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     close_game()
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_m:
+                    self.sounds.toggle_mute()
+                    continue
                 if event.type == pygame.KEYDOWN:
                     for button in buttons:
                         if event.key in button.keys:
+                            self.sounds.play("click")
                             return button.name
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     for button in buttons:
                         if button.rect.collidepoint(event.pos):
+                            self.sounds.play("click")
                             return button.name
-            draw_scene()
-            for button in buttons:
-                button.draw(self.screen, self.font)
-            pygame.display.flip()
+            self.show_frame(draw_scene, buttons)
             self.clock.tick(FPS)
 
-    def demo_step(self, draw_scene, buttons):
-        """Demo mode: draw one frame, save the first screenshots, choose automatically."""
-        pygame.event.pump()
-        draw_scene()
+    def show_frame(self, draw_scene, buttons):
+        now = time.time()
+        dt = min(0.1, now - self.last_frame)
+        self.last_frame = now
+        draw_scene(dt)
+        self.screen.fill((0, 0, 0))
+        self.screen.blit(self.canvas, self.shake.offset())
+        self.screen.blit(self.vignette, (0, 0))
         for button in buttons:
             button.draw(self.screen, self.font)
         pygame.display.flip()
+
+    def demo_step(self, draw_scene, buttons):
+        """Demo mode: draw one frame, save it as a screenshot, choose automatically."""
+        pygame.event.pump()
+        self.show_frame(draw_scene, buttons)
         if self.demo_shots < 400:
             Path(self.demo_dir).mkdir(parents=True, exist_ok=True)
-            pygame.image.save(self.screen, str(Path(self.demo_dir) / f"screen_{self.demo_shots:02d}.png"))
+            pygame.image.save(self.screen, str(Path(self.demo_dir) / f"screen_{self.demo_shots:03d}.png"))
             self.demo_shots += 1
         names = [b.name for b in buttons]
         if self.demo_choice in names:
             return self.demo_choice
         return names[0]
 
-    def draw_top_bar(self):
-        pygame.draw.rect(self.screen, COLORS["panel"], (0, 0, WIDTH, 40))
-        draw_text(self.screen, self.room_label, self.font, COLORS["text"], 16, 11)
-        right = f"director: {self.director_name}"
-        draw_text(self.screen, right, self.font_small, COLORS["dim_text"], WIDTH - 200, 13)
-
-    def card(self, title, paragraphs, button_label="Continue  [Space]", extra=None):
-        """A story or result card in the middle of the screen; waits for Continue."""
-        def draw_scene():
-            self.screen.blit(self.background, (0, 0))
-            self.draw_top_bar()
-            panel = pygame.Rect(140, 80, 680, 360)
-            pygame.draw.rect(self.screen, COLORS["panel"], panel, border_radius=14)
-            pygame.draw.rect(self.screen, COLORS["glow"], panel, width=2, border_radius=14)
-            draw_text(self.screen, title, self.font_big, COLORS["text"], panel.centerx, panel.y + 40, center=True)
-            y = panel.y + 80
+    def card(self, title, paragraphs, button_label="Continue  [Space]", side=None):
+        """A story or result card. side = function(surface, rect) drawing extra content on the right
+        (the park map). Waits for Continue."""
+        def draw_scene(dt):
+            draw_living_background(self.canvas, self.background)
+            self.fog.draw(self.canvas, dt)
+            self.draw_top_bar(self.canvas)
+            panel = pygame.Rect(60, 70, 840, 370)
+            pygame.draw.rect(self.canvas, COLORS["panel"], panel, border_radius=14)
+            pygame.draw.rect(self.canvas, COLORS["glow"], panel, width=2, border_radius=14)
+            text_width = 440 if side else 780
+            draw_text(self.canvas, title, self.font_big, COLORS["text"], panel.x + 30, panel.y + 22)
+            y = panel.y + 76
             for text, color in paragraphs:
-                for line in wrap_text(text, self.font, 620):
-                    draw_text(self.screen, line, self.font, color, panel.x + 30, y)
+                for line in wrap_text(text, self.font, text_width):
+                    draw_text(self.canvas, line, self.font, color, panel.x + 30, y)
                     y += 26
                 y += 10
-            if extra:
-                extra()
-        button = Button("continue", button_label, (WIDTH // 2 - 110, 455, 220, 46), [pygame.K_SPACE, pygame.K_RETURN])
+            if side:
+                side(self.canvas, pygame.Rect(panel.x + 500, panel.y + 60, 320, 290))
+        button = Button("continue", button_label, (WIDTH // 2 - 120, 460, 240, 48), [pygame.K_SPACE, pygame.K_RETURN])
         self.wait_for(draw_scene, [button])
 
 
-class WindowNarrator:
-    """Wraps any director: shows a story card before each room and a result card after it."""
+# ---------------------------------------------------------------- title menu
+def title_menu(w, director):
+    """Title screen. The player can pick the director and switch sound. Output: chosen director."""
+    index = WINDOW_DIRECTORS.index(director) if director in WINDOW_DIRECTORS else 0
+    lineup = ["player", "walt", "wisp", "animatronic", "wraith"]
 
-    def __init__(self, inner, story, window):
+    def draw_scene(dt):
+        draw_living_background(w.canvas, w.background)
+        w.fog.draw(w.canvas, dt)
+        flicker = 200 + int(55 * math.sin(time.time() * 3))
+        draw_glow(w.canvas, WIDTH // 2, 120, 220, (120, 60, 160), strength=18)
+        draw_text(w.canvas, "HOLLOWMERE", w.font_title, (flicker, 220, 255), WIDTH // 2, 115, center=True)
+        draw_text(w.canvas, "One night in a haunted theme park. Walt knows the way out... or does he?",
+                  w.font, COLORS["dim_text"], WIDTH // 2, 175, center=True)
+        for i, name in enumerate(lineup):
+            bob = int(5 * math.sin(time.time() * 2 + i))
+            w.draw_sprite(name, 250 + i * 115, 330, dy=bob if i >= 2 else 0)
+        draw_text(w.canvas, "A attack (stop the timing bar with Space)   ·   D defend when a ghost glows   ·   "
+                  "P potion   ·   M mute", w.font_small, COLORS["dim_text"], WIDTH // 2, 365, center=True)
+
+    while True:
+        sound = "off" if w.sounds.muted else "on"
+        buttons = [Button("start", "Start  [Space]", (130, 410, 220, 50), [pygame.K_SPACE, pygame.K_RETURN]),
+                   Button("director", f"Director: {WINDOW_DIRECTORS[index]}  < >", (370, 410, 250, 50),
+                          [pygame.K_LEFT, pygame.K_RIGHT]),
+                   Button("sound", f"Sound: {sound}  [S]", (640, 410, 190, 50), [pygame.K_s]),
+                   Button("quit", "Quit  [Esc]", (370, 470, 250, 40), [pygame.K_ESCAPE])]
+        choice = w.wait_for(draw_scene, buttons)
+        if choice == "start":
+            return WINDOW_DIRECTORS[index]
+        if choice == "director":
+            index = (index + 1) % len(WINDOW_DIRECTORS)
+        if choice == "sound":
+            w.sounds.toggle_mute()
+        if choice == "quit":
+            close_game()
+
+
+# ---------------------------------------------------------------- director wrapper (cards + map)
+class WindowNarrator:
+    """Wraps any director: shows the story card with the park map before each room and a
+    result card after it, and adds the room's timing score to the saved row."""
+
+    def __init__(self, inner, story, window, policy):
         self.inner = inner
         self.story = story
         self.window = window
+        self.policy = policy
         self.last_mode = None
+        self.visited = []
 
     def decide(self, state):
         decision = self.inner.decide(state)
         beat = self.story.by_id.get(decision.get("beat_id"))
-        if beat is None:          # invalid choice: the engine repairs it, nothing to show yet
+        if beat is None:                      # invalid choice: the engine repairs it, nothing to show
             return decision
         w = self.window
         zone = C.ZONE_NAMES[state["zone"]]
@@ -324,124 +283,219 @@ class WindowNarrator:
         w.difficulty = decision.get("difficulty") if decision.get("difficulty") in C.DIFFICULTY else "normal"
         paragraphs = [(beat["text"], COLORS["text"])]
         if w.help_mode and w.help_mode != self.last_mode:      # Walt only speaks when his behaviour changes
-            paragraphs.append((WALT_LINES.get(w.help_mode, ""), COLORS["flashlight"]))
+            paragraphs.append((f"Walt: '{WALT_BUBBLE.get(w.help_mode, '')}'", COLORS["flashlight"]))
             self.last_mode = w.help_mode
         walt_text = "Walt is the enemy now" if state["is_finale"] else f"Walt: {w.help_mode}"
-        paragraphs.append((f"Director's choice: {decision.get('difficulty')} difficulty  ·  {walt_text}",
-                           COLORS["dim_text"]))
-        w.card(beat["title"], paragraphs)
+        paragraphs.append((f"Director's choice: {w.difficulty} difficulty  ·  {walt_text}", COLORS["dim_text"]))
+
+        def park_map(surface, rect):
+            draw_park_map(surface, rect, self.story.beats, self.visited, beat["id"], w.font_small)
+
+        w.card(beat["title"], paragraphs, side=park_map)
         w.bubble = WALT_BUBBLE.get(w.help_mode, "")
         return decision
 
     def observe(self, state, decision, row):
+        self.visited.append(row["beat_id"])
+        row["timing_score"] = self.policy.take_room_timing()
         band = row["band"]
         result = "cleared" if row["cleared"] else "not cleared"
         text = f"{result}, deaths {row['deaths']}, HP lost {row['hp_lost_ratio']:.0%}"
-        self.window.card("Room result", [(text, COLORS["text"]),
-                                         (f"This room was {BAND_TEXT[band]}.", COLORS[band])])
+        self.window.sounds.play("win" if band == "in_band" else "click")
+        self.window.card("Room result", [(text, COLORS["text"]), (f"This room was {BAND_TEXT[band]}.", COLORS[band])])
         self.inner.observe(state, decision, row)
 
 
+# ---------------------------------------------------------------- the human player
 class WindowPolicy(HumanPolicy):
-    """The human player, but choices come from the window instead of typed letters.
-    Same accuracy and dodge as the terminal version (inherited from HumanPolicy)."""
+    """The human player in the window. Dodge is inherited from HumanPolicy (10%); accuracy is set
+    by the timing bar before every attack."""
 
     def __init__(self, window):
         self.window = window
+        self.accuracy = TIMING_BASE + TIMING_RANGE * 0.5
         self.previous_hp = None
         self.previous_ghosts = None
+        self.previous_wind_up = False
         self.last_action = None
+        self.room_timing = []
+
+    def take_room_timing(self):
+        """Mean timing score of this room's attacks (None if no attack), then start a new room."""
+        scores = self.room_timing
+        self.room_timing = []
+        if not scores:
+            return None
+        return round(sum(scores) / len(scores), 3)
 
     def choose_action(self, view, rng):
         w = self.window
         self.show_what_happened(view)
-        ghosts = view["enemies"]          # only the ghosts still alive
+        ghosts = view["enemies"]                       # only the ghosts still alive
         hp_mult = C.DIFFICULTY[w.difficulty]["hp_mult"]
-        glowing_kinds = ("wraith", "walt") if view["wind_up"] else ()
-        if view["wind_up"] and view["warning"]:
+        charging = view["wind_up"]
+        if charging and not self.previous_wind_up:
+            w.sounds.play("charge")
+        self.previous_wind_up = charging
+        if charging and view["warning"]:
             w.bubble = "It's glowing, DEFEND!"
-        elif w.bubble == "It's glowing, DEFEND!":          # the glow is over: back to his normal line
+        elif w.bubble == "It's glowing, DEFEND!":      # the glow is over: back to his normal line
             w.bubble = WALT_BUBBLE.get(w.help_mode, "")
 
-        def draw_scene():
-            w.screen.blit(w.background, (0, 0))
-            w.draw_top_bar()
-            draw_player(w.screen, 180, 340)
-            draw_bar(w.screen, 120, 375, 120, 12, view["hp"] / view["max_hp"])
-            draw_text(w.screen, f"{view['hp']:.0f}/{view['max_hp']} HP", w.font_small, COLORS["text"], 120, 392)
-            for i in range(view["potions"]):                      # one bottle per potion left
-                pygame.draw.rect(w.screen, COLORS["potion"], (120 + i * 18, 414, 12, 18), border_radius=3)
+        def draw_scene(dt):
+            c = w.canvas
+            draw_living_background(c, w.background)
+            w.fog.draw(c, dt)
+            w.draw_top_bar(c)
+            lunge = w.flashes.progress("lunge", 0.3)
+            dx = int(40 * math.sin(math.pi * lunge)) if lunge is not None else 0   # step forward and back
+            w.draw_sprite("player", 170 + dx, GROUND_Y, flash=w.flashes.active("player_hit"))
+            draw_bar(c, 110, GROUND_Y + 12, 120, 12, view["hp"] / view["max_hp"])
+            draw_text(c, f"{view['hp']:.0f}/{view['max_hp']} HP", w.font_small, COLORS["text"], 110, GROUND_Y + 30)
+            for i in range(view["potions"]):                                       # one bottle per potion
+                pygame.draw.rect(c, COLORS["potion"], (110 + i * 18, GROUND_Y + 52, 12, 18), border_radius=3)
             if not w.is_finale:
-                draw_walt(w.screen, 300, 340)
-                draw_text(w.screen, f"Walt: {w.help_mode}", w.font_small, COLORS["dim_text"], 265, 375)
+                bob = int(2 * math.sin(time.time() * 2))
+                w.draw_sprite("walt", 300, GROUND_Y, dy=bob)
+                draw_text(c, f"Walt: {w.help_mode}", w.font_small, COLORS["dim_text"], 262, GROUND_Y + 12)
                 if w.bubble:
-                    draw_bubble(w.screen, w.font_small, w.bubble, 300, 250)
+                    draw_bubble(c, w.font_small, w.bubble, 300, 270)
             for i, (kind, hp) in enumerate(ghosts):
-                full_hp = C.ENEMY_TYPES[kind]["hp"] * hp_mult    # a ghost's HP at the start of the room
-                x = 600 + i * 120
-                draw_ghost(w.screen, kind, x, 340, kind in glowing_kinds, w.font_mark)
-                draw_bar(w.screen, x - 40, 375, 80, 10, hp / full_hp)
-                draw_text(w.screen, kind, w.font_small, COLORS["dim_text"], x, 398, center=True)
-            if view["wind_up"] and not view["warning"]:      # no Walt warning: only the glow and this line
-                draw_text(w.screen, "Something is glowing brighter and brighter...", w.font_big,
+                x = ghost_x(i, len(ghosts))
+                glowing = charging and kind in ("wraith", "walt")
+                if glowing:
+                    draw_glow(c, x, GROUND_Y - 50, 100, COLORS["charge"], strength=45)
+                    x = x + int(5 * math.sin(time.time() * 40))                      # fast shaking
+                    draw_text(c, "!", w.font_mark, COLORS["charge"], x, GROUND_Y - 150, center=True)
+                bob = int(5 * math.sin(time.time() * 3 + i)) if kind in ("wisp", "wraith") else 0
+                sprite = "walt_ghost" if kind == "walt" else kind
+                w.draw_sprite(sprite, x, GROUND_Y, flash=w.flashes.active(f"ghost{i}"), flip=True, dy=bob)
+                full_hp = C.ENEMY_TYPES[kind]["hp"] * hp_mult
+                draw_bar(c, x - 40, GROUND_Y + 12, 80, 10, hp / full_hp)
+                draw_text(c, kind, w.font_small, COLORS["dim_text"], x, GROUND_Y + 34, center=True)
+            if charging and not view["warning"]:            # no Walt warning: only the glow and this line
+                draw_text(c, "Something is glowing brighter and brighter...", w.font_big,
                           COLORS["charge"], WIDTH // 2, 105, center=True)
-            w.draw_popups()
+            w.particles.draw(c, dt)
+            w.draw_popups(c)
 
-        buttons = [Button("attack", "A  Attack", (150, 460, 200, 50), [pygame.K_a]),
-                   Button("defend", "D  Defend", (380, 460, 200, 50), [pygame.K_d],
-                          flashing=view["wind_up"] and view["warning"]),      # only Walt's hint flashes it
-                   Button("potion", "P  Potion", (610, 460, 200, 50), [pygame.K_p])]
+        buttons = [Button("attack", "A  Attack", (150, 470, 200, 50), [pygame.K_a]),
+                   Button("defend", "D  Defend", (380, 470, 200, 50), [pygame.K_d],
+                          flashing=charging and view["warning"]),          # only Walt's hint flashes it
+                   Button("potion", "P  Potion", (610, 470, 200, 50), [pygame.K_p])]
         if w.demo_dir is not None:      # demo player: defend on a glow, potion when low, else attack
-            if view["wind_up"]:
+            if charging:
                 w.demo_choice = "defend"
             elif view["hp"] < 35 and view["potions"] > 0:
                 w.demo_choice = "potion"
             else:
                 w.demo_choice = "attack"
-        self.last_action = w.wait_for(draw_scene, buttons)
+        action = w.wait_for(draw_scene, buttons)
+        if action == "attack":
+            score = self.timing_bar(draw_scene)
+            self.accuracy = TIMING_BASE + TIMING_RANGE * score
+            self.room_timing.append(score)
+            w.flashes.start("lunge", 0.3)
+        self.last_action = action
         self.previous_hp = view["hp"]
         self.previous_ghosts = list(ghosts)
-        return self.last_action
+        return action
+
+    def timing_bar(self, draw_scene):
+        """A marker sweeps across a bar; the player stops it. Output: timing score 0..1 (1 = centre)."""
+        w = self.window
+        start = time.time()
+        bar = pygame.Rect(230, 100, 500, 34)
+
+        def marker_position():
+            # starts at the left edge (the -pi/2), so pressing at once is NOT a perfect hit
+            return 0.5 + 0.5 * math.sin(2 * math.pi * TIMING_SPEED * (time.time() - start) - math.pi / 2)
+
+        def draw_with_bar(dt):
+            draw_scene(dt)
+            c = w.canvas
+            panel = bar.inflate(40, 70)
+            pygame.draw.rect(c, COLORS["panel"], panel, border_radius=10)
+            draw_text(c, "Stop in the middle!  [Space]", w.font, COLORS["text"], bar.centerx, bar.y - 18, center=True)
+            pygame.draw.rect(c, COLORS["bar_back"], bar, border_radius=6)
+            pygame.draw.rect(c, (200, 170, 60), bar.inflate(-bar.width * 0.5, 0), border_radius=6)   # good zone
+            pygame.draw.rect(c, COLORS["hp_good"], bar.inflate(-bar.width * 0.8, 0), border_radius=6)  # sweet spot
+            x = bar.x + int(marker_position() * bar.width)
+            pygame.draw.rect(c, COLORS["text"], (x - 3, bar.y - 8, 6, bar.height + 16))
+
+        stop = Button("stop", "Strike!  [Space]", (WIDTH // 2 - 110, 160, 220, 44), [pygame.K_SPACE])
+        w.wait_for(draw_with_bar, [stop])
+        score = max(0.0, 1 - abs(marker_position() - 0.5) / 0.5)
+        if score > 0.8:
+            label, color = "Perfect!", COLORS["heal"]
+        elif score > 0.5:
+            label, color = "Good", COLORS["charge"]
+        else:
+            label, color = "Clumsy...", COLORS["dim_text"]
+        w.popup(f"{label} {TIMING_BASE + TIMING_RANGE * score:.0%}", color, 470, 330)
+        return score
 
     def show_what_happened(self, view):
-        """Compare HP with the last turn and show floating numbers (and Walt's heal line)."""
+        """Compare with the last turn: numbers, effects and sounds for damage, heals and hits."""
         w = self.window
         if self.previous_hp is None:
             return
         change = view["hp"] - self.previous_hp
-        if change < 0 and self.last_action == "defend":
-            w.popup(f"{change:.0f} HP blocked!", COLORS["damage"], 150, 185)
-        elif change < 0:
-            w.popup(f"{change:.0f} HP", COLORS["damage"], 150, 185)
+        if change < 0:
+            blocked = self.last_action == "defend"
+            w.popup(f"{change:.0f} HP blocked!" if blocked else f"{change:.0f} HP", COLORS["damage"], 150, 210)
+            w.shake.start(3 if blocked else 8, 0.25)
+            w.flashes.start("player_hit", 0.15)
+            w.sounds.play("block" if blocked else "hurt")
         elif change > 0 and self.last_action == "potion":
-            w.popup(f"+{change:.0f} potion", COLORS["heal"], 150, 185)
+            w.popup(f"+{change:.0f} potion", COLORS["heal"], 150, 210)
+            w.particles.rise(170, GROUND_Y - 60, COLORS["potion"])
+            w.sounds.play("potion")
         elif change > 0:
-            w.popup(f"+{change:.0f} Walt heals", COLORS["heal"], 150, 185)
+            w.popup(f"+{change:.0f} Walt heals", COLORS["heal"], 150, 210)
+            w.particles.rise(170, GROUND_Y - 60, COLORS["heal"])
             w.bubble = "You're hurt. Hold still, kid."
+            w.sounds.play("heal")
         self.show_ghost_hits(view["enemies"])
 
     def show_ghost_hits(self, ghosts):
-        """Floating numbers over the ghosts: the damage you (and Walt, in fight mode) did last turn."""
+        """Effects over the ghosts: the damage you (and Walt, in fight mode) did last turn."""
         w = self.window
         before = self.previous_ghosts
         if not before:
             return
-        if len(ghosts) < len(before):              # the front ghost was defeated (attacks hit the front one)
-            w.popup("defeated!", COLORS["heal"], 600, 300)
+        if len(ghosts) < len(before):                  # the front ghost was defeated (attacks hit the front one)
+            x = ghost_x(0, len(before))
+            w.popups = [p for p in w.popups if p[3] != 300]
+            w.popup("defeated!", COLORS["heal"], x, 300)
+            w.particles.burst(x, GROUND_Y - 50, COLORS["glow"], count=40, speed=220)
+            w.sounds.play("defeat")
             return
+        hit_any = False
         for i, ((kind, hp), (_, old_hp)) in enumerate(zip(ghosts, before)):
             if hp < old_hp:
-                w.popup(f"-{old_hp - hp:.0f}", COLORS["text"], 650 + i * 120, 300)
+                x = ghost_x(i, len(ghosts))
+                w.popup(f"-{old_hp - hp:.0f}", COLORS["text"], x + 50, 300)
+                w.flashes.start(f"ghost{i}", 0.15)
+                w.particles.burst(x, GROUND_Y - 50, (255, 240, 200), count=10, speed=140, lifetime=0.4, size=3)
+                hit_any = True
+        if hit_any:
+            w.sounds.play("hit")
+        elif self.last_action == "attack":
+            w.popup("miss", COLORS["dim_text"], ghost_x(0, len(ghosts)) + 50, 300)
+            w.sounds.play("miss")
 
     def wants_to_quit(self, consecutive_deaths):
         w = self.window
         self.previous_hp = None        # the room restarts with fresh HP, that is not healing
         self.previous_ghosts = None
+        w.sounds.play("death")
 
-        def draw_scene():
-            w.screen.fill((0, 0, 0))
-            draw_text(w.screen, "Everything goes dark...", w.font_big, COLORS["damage"], WIDTH // 2, 200, center=True)
-            draw_text(w.screen, "Try this attraction again?", w.font, COLORS["text"], WIDTH // 2, 260, center=True)
+        def draw_scene(dt):
+            w.canvas.fill((0, 0, 0))
+            w.fog.draw(w.canvas, dt)
+            draw_text(w.canvas, "Everything goes dark...", w.font_big, COLORS["damage"], WIDTH // 2, 200, center=True)
+            draw_text(w.canvas, "Try this attraction again?", w.font, COLORS["text"], WIDTH // 2, 260, center=True)
 
         buttons = [Button("yes", "Y  Try again", (260, 330, 200, 50), [pygame.K_y]),
                    Button("no", "N  Give up", (500, 330, 200, 50), [pygame.K_n])]
@@ -450,32 +504,39 @@ class WindowPolicy(HumanPolicy):
     def end_of_room(self, room_index):
         self.previous_hp = None        # resting between rooms heals you, that is not Walt
         self.previous_ghosts = None
+        self.previous_wind_up = False
         self.window.popups = []
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--controller", default="fixed", choices=["fixed", "random", "rule", "bandit"])
-    ap.add_argument("--out", default="data/human_runs.csv")
-    ap.add_argument("--demo", default=None, help="folder for screenshots: plays by itself, saves nothing")
+    ap.add_argument("--controller", default="rule", choices=WINDOW_DIRECTORS, help="pre-selected in the menu")
+    ap.add_argument("--out", default="data/window_runs.csv")
+    ap.add_argument("--no-sound", action="store_true")
+    ap.add_argument("--demo", default=None, help="folder for screenshots: plays by itself, saves no game")
     args = ap.parse_args()
+    if args.demo is not None:
+        os.environ["SDL_AUDIODRIVER"] = "dummy"       # demo runs silently
 
     story = Story()
     seed = random.randrange(10**6)
     player_id = uuid.uuid4().hex[:6]       # anonymous, not linked to any name
-    window = GameWindow(args.controller, demo_dir=args.demo)
+    window = GameWindow(args.controller, demo_dir=args.demo, sound_on=not args.no_sound)
+    window.sounds.start_music()
+    director = title_menu(window, args.controller)
+    window.director_name = director
     window.room_label = "Hollowmere Park, midnight"
-    window.card("Hollowmere", [
-        ("Midnight. You wake up inside Hollowmere Park. The gates are locked.", COLORS["text"]),
+    window.card("Midnight", [
+        ("You wake up inside Hollowmere Park. The gates are locked.", COLORS["text"]),
         ("An old mechanic with a flashlight finds you. 'Name's Walt. Stick with me, I know the way out.'",
-         COLORS["flashlight"]),
-        ("Controls: A attack, D defend (halves damage, best when a ghost glows), P potion (+35 HP, 3 per run).",
-         COLORS["dim_text"])], button_label="Start  [Space]")
+         COLORS["flashlight"])], button_label="Follow Walt  [Space]")
 
-    controller = WindowNarrator(CONTROLLERS[args.controller](rng=random.Random(seed)), story, window)
-    rows = play_run(controller, WindowPolicy(window), story, seed)
+    policy = WindowPolicy(window)
+    controller = WindowNarrator(CONTROLLERS[director](rng=random.Random(seed)), story, window, policy)
+    rows = play_run(controller, policy, story, seed)
 
     outcome = rows[-1]["run_outcome"]
+    window.sounds.play("win" if outcome == "escaped" else "death")
     window.room_label = "The end"
     window.card("Escaped!" if outcome == "escaped" else "Trapped", [(ENDINGS[outcome], COLORS["text"])],
                 button_label="Close  [Space]")
@@ -485,12 +546,12 @@ def main():
         print(f"demo finished ({outcome}), screenshots in {args.demo}")
         return
     for r in rows:
-        r.update({"run_id": f"human-{player_id}-{seed}", "controller": args.controller,
+        r.update({"run_id": f"window-{player_id}-{seed}", "controller": director,
                   "bot_type": "human", "player_id": player_id})
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows).to_csv(out, mode="a", header=not out.exists(), index=False)
-    print(f"Telemetry saved to {out}")
+    print(f"Game saved to {out}")
 
 
 if __name__ == "__main__":

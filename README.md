@@ -18,7 +18,7 @@ python compare_directors.py --controllers fixed random rule  # rule director vs 
 python failure_predictor.py                 # failure predictor (trained on random-director data)
 python bandit_experiment.py                 # train + test the bandit, draws the learning curve
 python play.py --controller rule            # play it yourself in the terminal (fixed, random, rule, bandit)
-python play_window.py --controller rule     # play it in a game window (pygame)
+python play_window.py                       # game window: title menu, pixel art, sound, park map, timing bar
 python robustness_experiment.py --games 300 # held-out bot type and +/-20% sensitivity check
 
 # LLM directors need Ollama: brew install ollama && brew services start ollama && ollama pull llama3.2:3b
@@ -50,7 +50,8 @@ python llm_experiment.py --controller llm_risk --games 25 --batch 2 --pause 180 
 | `llm_experiment.py` | LLM directors vs the others on the same seeds, in batches with cooling pauses |
 | `robustness_experiment.py` | Held-out bot type (re-learn without one type, test on it) and +/-20% changes to the game |
 | `play.py` | Human play in the terminal, telemetry saved under an anonymous ID |
-| `play_window.py` | Human play in a pygame window (same engine and telemetry); `--demo` plays by itself for testing |
+| `play_window.py` | Game window (pygame): title menu (pick the director), park map, timing bar for attacks; games saved to `data/window_runs.csv`; `--demo` plays by itself for testing |
+| `window/` | Pixel-art sprites and park background (`art.py`), particles, shake, fog (`effects.py`), sounds and music generated in code (`sound.py`), park map (`park_map.py`) |
 
 **Seeds:** 0–1999 training (tables, tuning, bandit learning), 50000+ validation (bandit exploration strength), 100000–100999 final director test, 200000+ failure-predictor test. Nothing was tuned on test seeds.
 
@@ -81,7 +82,8 @@ python llm_experiment.py --controller llm_risk --games 25 --batch 2 --pause 180 
 - **Logistic regression kept as the main failure predictor instead of gradient boosting**, because both reach the same AUC (0.93) and the simpler model is easier to explain.
 - **LSTM predictor cut** (first item on the cut list): gradient boosting already added nothing over a straight-line model, so a sequence model was very unlikely to change the conclusion, and it would have needed PyTorch.
 - **LLM answers made repeatable (temperature 0, fixed seed, cache) instead of sampling**, so every experiment can be re-run with identical results and without new model work.
-- **Game window drawn with simple shapes in code instead of downloaded sprites**, so there are no image files or licence questions. Charge-ups are shown by an orange glow, shaking and a "!" for everyone; Walt's "DEFEND!" bubble and the flashing Defend button only appear in `hint` mode, otherwise the window would give every player the hint for free.
+- **Timing bar in the game window instead of a fixed 75% aim**: hit chance = 40% + 55% x timing score (sweet spot 95%), so human skill shows in aiming too, without changing the engine (the window sets the player's accuracy before each attack). A random press averages about 67%. Window games go to `data/window_runs.csv` with a `timing_score` column, never mixed with the fixed-aim games in `data/human_runs.csv`.
+- **Pixel art, sound and music made in code instead of downloaded assets**, so there are no image files or licence questions. Charge-ups are shown by an orange glow, shaking and a "!" for everyone; Walt's "DEFEND!" bubble and the flashing Defend button only appear in `hint` mode, otherwise the window would give every player the hint for free.
 - **No extra "guard" help mode (Walt fights only when the player's HP is low) instead of a 5th mode**, because `fight` already works as a rescue (beginner deaths per room 0.21 with `stay_back` vs 0.04 with `fight`, random director, 500 runs per bot type), the main balance problem is rooms being *too easy*, not too hard, and an automatic in-room rescue would do part of the director's job for it, which blurs the comparison between directors. A 5th mode would also grow the bandit's choices from 12 to 15. Walt can still be *shown* stepping in during `fight`/`heal` in the pygame panel.
 
 ## Current balance (fixed director, 500 runs per bot type, 19 Oct, after balancing)
