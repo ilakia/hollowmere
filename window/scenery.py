@@ -152,7 +152,6 @@ class Scenery:
         self.stars = [(random.Random(i).randrange(WIDTH), random.Random(i + 99).randrange(230)) for i in range(80)]
         self.dark = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         self.glow = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-        self.kick = 0.0                 # extra camera push (e.g. towards the ghosts on an attack)
         self.world_x = 0.0              # how far the player has walked in this zone (pixels)
         self.last_cam = 0.0
         self.stamps = {}
@@ -182,14 +181,15 @@ class Scenery:
         return self.stamps[key]
 
     def camera(self):
-        self.kick *= 0.9                                     # the push eases back
-        self.last_cam = 30 * math.sin(time.time() * 0.12) + self.kick + self.world_x
+        # the scene only moves when the player walks (no drifting: it made the lampposts wander during fights)
+        self.last_cam = self.world_x
         return self.last_cam
 
     def lamps(self):
-        """Screen positions of the foreground lampposts for the current camera (they repeat along the path)."""
+        """Screen positions of the lampposts for the current camera (they stand on the ground and repeat
+        along the path, so they move exactly like the ground when you walk)."""
         positions = []
-        shift = (self.last_cam * 1.2) % LAMP_SPACING
+        shift = (self.last_cam * 0.8) % LAMP_SPACING
         for base in (70, 70 + LAMP_SPACING, 70 + 2 * LAMP_SPACING):
             x = int(base - shift)
             if -40 < x < WIDTH + 40:
@@ -217,9 +217,13 @@ class Scenery:
             y = 50 + int(12 * math.sin(i * 0.9))
             if random.random() > 0.03:
                 pygame.draw.circle(surface, mood["light"], (x, y), 4)
+        for x, y in self.lamps():                            # lampposts, BEHIND the characters
+            pygame.draw.rect(surface, (18, 14, 22), (x - 5, y, 10, GROUND_Y - y + 6))
+            pygame.draw.rect(surface, (18, 14, 22), (x - 16, y - 10, 32, 14), border_radius=4)
+            pygame.draw.circle(surface, (255, 240, 200), (x, y + 6), 7)
 
     def draw_front(self, surface, zone, lights, finale=False):
-        """Lighting over the characters, then the foreground lampposts.
+        """Lighting over the characters.
         lights = list of (x, y, radius, colour) for this frame (Walt's flashlight, glowing ghosts...)."""
         mood = ZONE_MOODS[zone]
         darkness = 120 if not finale else 140               # how dark the unlit parts of the scene are
@@ -238,7 +242,3 @@ class Scenery:
         shade.blit(self.dark, (0, 0), special_flags=pygame.BLEND_RGBA_SUB)   # lights remove darkness
         surface.blit(shade, (0, 0))
         surface.blit(self.glow, (0, 0))
-        for x, y in self.lamps():                                         # foreground lampposts
-            pygame.draw.rect(surface, (18, 14, 22), (x - 5, y, 10, GROUND_Y - y + 20))
-            pygame.draw.rect(surface, (18, 14, 22), (x - 16, y - 10, 32, 14), border_radius=4)
-            pygame.draw.circle(surface, (255, 240, 200), (x, y + 6), 7)

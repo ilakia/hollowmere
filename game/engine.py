@@ -88,6 +88,7 @@ def play_room(player, beat, difficulty, help_mode, policy, rng):
     while True:  # each loop is one attempt at the room
         enemies = make_enemies(beat, difficulty)
         heal_left = 1 if help_mode == "heal" else 0
+        rest_left = 1 if help_mode in C.COVER_HELP_MODES else 0   # human-only "rest" action, once per attempt
         died = True  # becomes False only if the room is cleared
 
         for turn in range(C.MAX_TURNS_PER_ATTEMPT):
@@ -116,7 +117,17 @@ def play_room(player, beat, difficulty, help_mode, policy, rng):
                 hp_before = player.hp
                 player.hp = min(C.PLAYER_MAX_HP, player.hp + C.POTION_HEAL)
                 t["hp_healed"] += player.hp - hp_before  # only HP actually gained, healing stops at max HP
-            elif action == "defend":
+            elif action == "rest" and rest_left and alive:
+                # Human-only action (game window): Walt covers the player for one turn. The player
+                # recovers some HP, Walt strikes the front ghost, and incoming damage is halved like
+                # defending. Bots never choose it, so every bot and director result is unchanged.
+                rest_left = 0
+                defending = True
+                hp_before = player.hp
+                player.hp = min(C.PLAYER_MAX_HP, player.hp + C.COVER_HEAL)
+                t["hp_healed"] += player.hp - hp_before
+                alive[0].hp -= C.COVER_WALT_DAMAGE
+            elif action in ("defend", "rest"):     # "rest" when it is not allowed counts as defending
                 defending = True
                 t["defends"] += 1
                 t["defends_on_windup"] += wind_up

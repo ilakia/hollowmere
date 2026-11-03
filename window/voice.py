@@ -16,26 +16,30 @@ from pathlib import Path
 
 import pygame
 
-VOICE = "Grandpa (English (US))"     # an old man's voice, fits an old park mechanic
+VOICE = "Grandpa (English (US))"     # default: an old man's voice, fits an old park mechanic
+# voices the player can choose on the title screen (name shown, macOS voice name)
+VOICE_OPTIONS = [("Grandpa", "Grandpa (English (US))"), ("Grandpa UK", "Grandpa (English (UK))"),
+                 ("Fred", "Fred"), ("Ralph", "Ralph"), ("Rocko", "Rocko (English (US))"),
+                 ("Reed", "Reed (English (US))"), ("Daniel", "Daniel")]
 RATE = 165                           # words per minute (a bit slower than normal, he is old and tired)
 GHOST_RATE = 120                     # in the finale he speaks slower and lower
 CACHE = Path("data/voice")
 
 
-def file_for(text, ghost=False):
-    """Each line gets its own file, named after a short fingerprint of the text."""
-    key = hashlib.md5((text + ("|ghost" if ghost else "")).encode("utf-8")).hexdigest()[:12]
+def file_for(text, ghost=False, voice=VOICE):
+    """Each line (per voice) gets its own file, named after a short fingerprint of the text."""
+    key = hashlib.md5((voice + "|" + text + ("|ghost" if ghost else "")).encode("utf-8")).hexdigest()[:12]
     return CACHE / f"walt_{key}.wav"
 
 
-def make_line(text, ghost=False):
+def make_line(text, ghost=False, voice=VOICE):
     """Create the WAV file for one line with macOS `say` (skipped if it already exists)."""
-    path = file_for(text, ghost)
+    path = file_for(text, ghost, voice)
     if path.exists():
         return path
     CACHE.mkdir(parents=True, exist_ok=True)
     rate = GHOST_RATE if ghost else RATE
-    command = ["say", "-v", VOICE, "-r", str(rate), "--file-format=WAVE", "--data-format=LEI16@22050",
+    command = ["say", "-v", voice, "-r", str(rate), "--file-format=WAVE", "--data-format=LEI16@22050",
                "-o", str(path), text]
     subprocess.run(command, check=True, capture_output=True, timeout=30)
     return path
@@ -44,21 +48,49 @@ def make_line(text, ghost=False):
 class WaltVoice:
     """Prepares all of Walt's lines in the background and plays them on request."""
 
-    def __init__(self, lines, ghost_lines, enabled=True):
+    def __init__(self, lines, ghost_lines, enabled=True, voice=VOICE):
         self.ready = {}                  # (text, ghost) -> pygame Sound
         self.channel = None
+        self.preview_process = None
+        self.voice = voice
+        self.generation = 0              # goes up when the voice changes, so old background work is ignored
+        self.jobs = [(t, False) for t in lines] + [(t, True) for t in ghost_lines]
         self.enabled = enabled and shutil.which("say") is not None and pygame.mixer.get_init() is not None
         if self.enabled:
-            jobs = [(t, False) for t in lines] + [(t, True) for t in ghost_lines]
-            threading.Thread(target=self.prepare, args=(jobs,), daemon=True).start()
+            self.start_preparing()
 
-    def prepare(self, jobs):
-        for text, ghost in jobs:
+    def start_preparing(self):
+        threading.Thread(target=self.prepare, args=(self.voice, self.generation), daemon=True).start()
+
+    def prepare(self, voice, generation):
+        for text, ghost in self.jobs:
+            if generation != self.generation:
+                return                   # the player chose another voice meanwhile
             try:
-                path = make_line(text, ghost)
-                self.ready[(text, ghost)] = pygame.mixer.Sound(str(path))
+                path = make_line(text, ghost, voice)
+                sound = pygame.mixer.Sound(str(path))
             except (subprocess.SubprocessError, OSError, pygame.error):
                 continue                 # one line failing is fine: it stays a silent bubble
+            if generation == self.generation:
+                self.ready[(text, ghost)] = sound
+
+    def set_voice(self, voice):
+        """Switch Walt's voice: forget the old sounds and prepare the lines in the new voice."""
+        if voice == self.voice or not self.enabled:
+            self.voice = voice
+            return
+        self.voice = voice
+        self.generation += 1
+        self.ready = {}
+        self.start_preparing()
+
+    def preview(self, voice, text):
+        """Let the player hear a voice straight away (macOS speaks it directly, nothing is saved)."""
+        if not self.enabled:
+            return
+        if self.preview_process is not None and self.preview_process.poll() is None:
+            self.preview_process.terminate()
+        self.preview_process = subprocess.Popen(["say", "-v", voice, "-r", str(RATE), text])
 
     def speak(self, text, ghost=False, muted=False):
         """Say a line (if its file is ready and sound is on). A new line interrupts the previous one."""

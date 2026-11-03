@@ -53,6 +53,15 @@ COMPANION_HEAL_TRIGGER = 0.5 # "low" = below 50% of max HP
 COMPANION_DAMAGE = 6         # fight: Walt swings his wrench every turn
 COMPANION_ACCURACY = 0.7
 
+# Human-only "rest" action in the game window (bots never use it, so bot results are unchanged):
+# once per attempt, when Walt is helping (not stay_back, not in the finale), the player can rest for a
+# turn while Walt covers them.
+# (named COVER_..., because REST_HEAL above already means the healing BETWEEN rooms)
+COVER_HELP_MODES = ["hint", "heal", "fight"]
+COVER_HEAL = 15              # HP the player recovers while resting
+COVER_WALT_DAMAGE = 12       # Walt's two wrench hits while covering (2 x COMPANION_DAMAGE)
+COVER_HP_TRIGGER = 0.4       # the window offers "Rest" only below 40% HP
+
 # ---------- Target difficulty band (FROZEN, do not tune per controller) ----------
 # A room is "in band" if the player cleared it without dying and lost
 # between 30% and 70% of all the HP they had in the room (start HP + HP healed).

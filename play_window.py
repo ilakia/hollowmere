@@ -44,7 +44,7 @@ from window.scenery import Scenery
 from window.setpieces import draw_set_piece
 from window.pieces_z3 import draw_big_gate
 from window.sound import SoundBank
-from window.voice import WaltVoice
+from window.voice import VOICE_OPTIONS, WaltVoice
 
 FPS = 30
 POPUP_SECONDS = 1.4
@@ -73,6 +73,9 @@ REVEAL_LINE = "I never left this park, kid. Neither will you."
 FAREWELL_LINE = "Not bad, kid. Not bad at all. Go on. Don't look back."
 DEFEND_LINE = "It's glowing, DEFEND!"
 HEAL_LINE = "You're hurt. Hold still, kid."
+REST_OFFER_LINE = "You're fading, kid. Take a rest, I've got this."
+REST_LINE = "Sit down, catch your breath. I'll handle them!"
+COVER_SECONDS = 5.0      # how long the player rests while Walt fights (the engine counts it as one turn)
 WALT_HITS = ["Take that!", "Back off!", "Not my kid!", "Hah!"]
 TRAVEL_LINES = ["This way, kid.", "Stay close.", "Don't touch anything that moves.", "Almost there.",
                 "I used to fix these rides.", "Hear that? Keep walking."]
@@ -87,6 +90,10 @@ ENDINGS = {
     "out_of_lives": "The lights go out. Tomorrow, the photo booth prints a new picture: you, with the 1987 staff.",
     "quit": "You stop walking. The park keeps you.",
 }
+
+
+class RestartGame(Exception):
+    """Raised by the pause menu's Restart: main() catches it and starts a new game from the title."""
 
 
 def close_game():
@@ -146,8 +153,9 @@ class GameWindow:
         self.shake = Shake()
         self.flashes = Flashes()
         self.sounds = SoundBank(enabled=sound_on and demo_dir is None)
-        spoken = ([INTRO_LINE, DEFEND_LINE, HEAL_LINE, GATE_LINE] +      # most needed first
+        spoken = ([INTRO_LINE, DEFEND_LINE, HEAL_LINE, REST_OFFER_LINE, REST_LINE, GATE_LINE] +   # most needed first
                   list(WALT_BUBBLE.values()) + WALT_HITS + TRAVEL_LINES)
+        self.voice_index = 0             # which of VOICE_OPTIONS Walt speaks with (chosen on the title screen)
         self.voice = WaltVoice(spoken, [REVEAL_LINE, FAREWELL_LINE], enabled=sound_on and demo_dir is None)
         self.director_name = director_name
         self.room_label = ""
@@ -177,8 +185,8 @@ class GameWindow:
         pygame.draw.rect(surface, COLORS["panel"], (0, 0, WIDTH, 40))
         draw_text(surface, self.room_label, self.font, COLORS["text"], 16, 11)
         sound = "muted (M)" if self.sounds.muted else "sound on (M)"
-        draw_text(surface, f"director: {self.director_name}   ·   {sound}", self.font_small,
-                  COLORS["dim_text"], WIDTH - 300, 13)
+        draw_text(surface, f"director: {self.director_name}  ·  {sound}  ·  menu (Esc)", self.font_small,
+                  COLORS["dim_text"], WIDTH - 360, 13)
 
     def draw_sprite(self, name, x, y_bottom, flash=False, flip=False, dy=0, alpha=255):
         """Draw a sprite standing on the ground at x (its centre). flash = white hit silhouette,
@@ -216,6 +224,10 @@ class GameWindow:
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_m:
                     self.sounds.toggle_mute()
                     continue
+                esc_used = any(pygame.K_ESCAPE in b.keys for b in buttons)
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE and not esc_used:
+                    self.pause_menu()
+                    continue
                 if event.type == pygame.KEYDOWN:
                     for button in buttons:
                         if event.key in button.keys:
@@ -240,6 +252,43 @@ class GameWindow:
         for button in buttons:
             button.draw(self.screen, self.font)
         pygame.display.flip()
+
+    def pause_menu(self):
+        """Esc: the game freezes behind a menu. Resume, Restart (new game from the title, this game is
+        not saved) or Quit (closes the window, not saved)."""
+        frozen = self.screen.copy()
+        shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        shade.fill((0, 0, 0, 170))
+        buttons = [Button("resume", "Resume  [Esc]", (WIDTH // 2 - 120, 220, 240, 50), [pygame.K_ESCAPE, pygame.K_SPACE]),
+                   Button("restart", "Restart  [R]", (WIDTH // 2 - 120, 285, 240, 50), [pygame.K_r]),
+                   Button("quit", "Quit  [Q]", (WIDTH // 2 - 120, 350, 240, 50), [pygame.K_q])]
+        while True:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    close_game()
+                choice = None
+                if event.type == pygame.KEYDOWN:
+                    for button in buttons:
+                        if event.key in button.keys:
+                            choice = button.name
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    for button in buttons:
+                        if button.rect.collidepoint(event.pos):
+                            choice = button.name
+                if choice == "resume":
+                    self.last_frame = time.time()        # no big time jump after the pause
+                    return
+                if choice == "restart":
+                    raise RestartGame()
+                if choice == "quit":
+                    close_game()
+            self.screen.blit(frozen, (0, 0))
+            self.screen.blit(shade, (0, 0))
+            draw_text(self.screen, "PAUSED", self.font_big, COLORS["text"], WIDTH // 2, 170, center=True)
+            for button in buttons:
+                button.draw(self.screen, self.font)
+            pygame.display.flip()
+            self.clock.tick(FPS)
 
     def speak(self, text, ghost=False):
         """Walt says a line: it appears in his speech bubble and is spoken aloud (window/voice.py).
@@ -270,6 +319,8 @@ class GameWindow:
                 close_game()
             if event.type == pygame.KEYDOWN and event.key == pygame.K_m:
                 self.sounds.toggle_mute()
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                self.pause_menu()
         self.clock.tick(FPS)
         now = time.time()
         dt = min(0.1, now - self.last_frame)
@@ -307,7 +358,7 @@ class GameWindow:
             return self.demo_choice
         return names[0]
 
-    def card(self, title, paragraphs, button_label="Continue  [Space]", side=None):
+    def card(self, title, paragraphs, button_label="Continue  [Space]", side=None, choices=None):
         """A story or result card. side = function(surface, rect) drawing extra content on the right
         (the park map). Waits for Continue."""
         def draw_scene(dt):
@@ -328,8 +379,14 @@ class GameWindow:
                 y += 10
             if side:
                 side(self.canvas, pygame.Rect(panel.x + 500, panel.y + 60, 320, 290))
-        button = Button("continue", button_label, (WIDTH // 2 - 120, 460, 240, 48), [pygame.K_SPACE, pygame.K_RETURN])
-        self.wait_for(draw_scene, [button])
+        if choices is None:
+            buttons = [Button("continue", button_label, (WIDTH // 2 - 120, 460, 240, 48), [pygame.K_SPACE, pygame.K_RETURN])]
+        else:                                     # several buttons side by side, e.g. play again / quit
+            width = 240
+            start = WIDTH // 2 - (len(choices) * (width + 20) - 20) // 2
+            buttons = [Button(name, label, (start + i * (width + 20), 460, width, 48), keys)
+                       for i, (name, label, keys) in enumerate(choices)]
+        return self.wait_for(draw_scene, buttons)
 
 
 # ---------------------------------------------------------------- title menu
@@ -357,12 +414,19 @@ def title_menu(w, director):
 
     while True:
         sound = "off" if w.sounds.muted else "on"
-        buttons = [Button("start", "Start  [Space]", (130, 410, 220, 50), [pygame.K_SPACE, pygame.K_RETURN]),
-                   Button("director", f"Director: {WINDOW_DIRECTORS[index]}  < >", (370, 410, 250, 50),
+        voice_name = VOICE_OPTIONS[w.voice_index][0]
+        buttons = [Button("start", "Start  [Space]", (90, 410, 200, 50), [pygame.K_SPACE, pygame.K_RETURN]),
+                   Button("director", f"Director: {WINDOW_DIRECTORS[index]}  < >", (305, 410, 240, 50),
                           [pygame.K_LEFT, pygame.K_RIGHT]),
-                   Button("sound", f"Sound: {sound}  [S]", (640, 410, 190, 50), [pygame.K_s]),
-                   Button("quit", "Quit  [Esc]", (370, 470, 250, 40), [pygame.K_ESCAPE])]
+                   Button("voice", f"Walt's voice: {voice_name}  [V]", (560, 410, 230, 50), [pygame.K_v]),
+                   Button("sound", f"Sound: {sound} [S]", (805, 410, 140, 50), [pygame.K_s]),
+                   Button("quit", "Quit  [Esc]", (370, 470, 220, 40), [pygame.K_ESCAPE])]
         choice = w.wait_for(draw_scene, buttons)
+        if choice == "voice":                     # next voice, and Walt says hello in it straight away
+            w.voice_index = (w.voice_index + 1) % len(VOICE_OPTIONS)
+            voice = VOICE_OPTIONS[w.voice_index][1]
+            w.voice.set_voice(voice)
+            w.voice.preview(voice, INTRO_LINE)
         if choice == "start":
             return WINDOW_DIRECTORS[index]
         if choice == "director":
@@ -524,10 +588,15 @@ class WindowNarrator:
         if not moved:
             draw_text(c, "hold RIGHT to walk", w.font, COLORS["text"], 700, 300, center=True)
             draw_arrow(c, 860, 300, COLORS["flashlight"])
-        if appear is not None:
-            draw_text(c, beat["title"].upper(), w.font_big, COLORS["charge"], 480, 190, center=True)
+        if appear is not None:                     # room name on its own dark banner: nothing can overlap it
+            banner = pygame.Surface((WIDTH, 60), pygame.SRCALPHA)
+            banner.fill((8, 6, 16, 220))
+            c.blit(banner, (0, 142))
+            pygame.draw.line(c, COLORS["charge"], (0, 142), (WIDTH, 142), 2)
+            pygame.draw.line(c, COLORS["charge"], (0, 201), (WIDTH, 201), 2)
             line = "Walt turns around..." if finale else "Ghosts appear!  Get ready..."
-            draw_text(c, line, w.font, COLORS["text"], 480, 225, center=True)
+            draw_text(c, beat["title"].upper(), w.font_big, COLORS["charge"], 480, 164, center=True)
+            draw_text(c, line, w.font_small, COLORS["text"], 480, 189, center=True)
         self.draw_track(c, state, beat, walked)
 
     def draw_track(self, c, state, beat, walked):
@@ -573,6 +642,15 @@ class WindowPolicy(HumanPolicy):
         self.previous_wind_up = False
         self.last_action = None
         self.room_timing = []
+        self.rest_used = False          # the rest can be used once per attempt at a room
+        self.rest_offered = False
+
+    def can_rest(self, view):
+        """Rest is offered when Walt is helping (hint, heal or fight, not in the finale), the player is
+        below COVER_HP_TRIGGER of max HP, and it has not been used in this attempt yet."""
+        w = self.window
+        low = view["hp"] < C.COVER_HP_TRIGGER * view["max_hp"]
+        return low and not w.is_finale and w.help_mode in C.COVER_HELP_MODES and not self.rest_used
 
     def take_room_timing(self):
         """Mean timing score of this room's attacks (None if no attack), then start a new room."""
@@ -601,6 +679,19 @@ class WindowPolicy(HumanPolicy):
             c = w.canvas
             w.scenery.draw_back(c, w.zone)
             walt_x = 300
+            cover = w.flashes.progress("walt_cover", COVER_SECONDS)
+            sitting = cover is not None
+            if cover is not None:                                                 # Walt steps in front of you
+                target = ghost_x(0, max(1, len(ghosts))) - 110
+                there = min(1.0, cover * 5, (1 - cover) * 5)
+                walt_x = int(300 + (target - 300) * there)
+                swing = (cover * COVER_SECONDS * 1.6) % 1.0                         # a swing every ~0.6 s
+                if there >= 1.0 and swing < 0.08:
+                    w.flashes.start("walt_attack", 0.35)
+                    w.flashes.start("ghost0", 0.15)
+                    if w.flashes.progress("swing_sound", 0.3) is None:
+                        w.sounds.play("hit")
+                        w.flashes.start("swing_sound", 0.3)
             attack = w.flashes.progress("walt_attack", 0.35)
             if attack is not None:
                 walt_x += int(70 * math.sin(math.pi * attack))                    # Walt lunges at the ghost
@@ -611,7 +702,10 @@ class WindowPolicy(HumanPolicy):
             lights = []
             lunge = w.flashes.progress("lunge", 0.3)
             dx = int(40 * math.sin(math.pi * lunge)) if lunge is not None else 0   # step forward and back
-            w.draw_sprite("player", 170 + dx, GROUND_Y, flash=w.flashes.active("player_hit"))
+            w.draw_sprite("player", 170 + dx, GROUND_Y, flash=w.flashes.active("player_hit"),
+                          dy=12 if sitting else 0)                                # crouches while resting
+            if sitting and int(time.time() * 8) % 2 == 0:
+                w.particles.rise(170, GROUND_Y - 50, COLORS["heal"], count=1)
             if not w.is_finale:
                 bob = int(2 * math.sin(time.time() * 2))
                 w.draw_sprite("walt", walt_x, GROUND_Y, dy=bob)
@@ -664,28 +758,61 @@ class WindowPolicy(HumanPolicy):
             w.particles.draw(c, dt)
             w.draw_popups(c)
 
-        buttons = [Button("attack", "A  Attack", (150, 470, 200, 50), [pygame.K_a]),
-                   Button("defend", "D  Defend", (380, 470, 200, 50), [pygame.K_d],
-                          flashing=charging and view["warning"]),          # only Walt's hint flashes it
-                   Button("potion", "P  Potion", (610, 470, 200, 50), [pygame.K_p])]
-        if w.demo_dir is not None:      # demo player: defend on a glow, potion when low, else attack
-            if charging:
+        rest_allowed = self.can_rest(view)
+        if rest_allowed and not self.rest_offered:     # Walt offers once per attempt
+            w.speak(REST_OFFER_LINE)
+            self.rest_offered = True
+        if rest_allowed:
+            buttons = [Button("attack", "A  Attack", (60, 470, 190, 50), [pygame.K_a]),
+                       Button("defend", "D  Defend", (270, 470, 190, 50), [pygame.K_d],
+                              flashing=charging and view["warning"]),
+                       Button("potion", "P  Potion", (480, 470, 190, 50), [pygame.K_p]),
+                       Button("rest", "R  Rest (Walt covers)", (690, 470, 220, 50), [pygame.K_r], flashing=True)]
+        else:
+            buttons = [Button("attack", "A  Attack", (150, 470, 200, 50), [pygame.K_a]),
+                       Button("defend", "D  Defend", (380, 470, 200, 50), [pygame.K_d],
+                              flashing=charging and view["warning"]),          # only Walt's hint flashes it
+                       Button("potion", "P  Potion", (610, 470, 200, 50), [pygame.K_p])]
+        if w.demo_dir is not None:      # demo player: rest when offered, defend on a glow, potion when low
+            if rest_allowed:
+                w.demo_choice = "rest"
+            elif charging:
                 w.demo_choice = "defend"
             elif view["hp"] < 35 and view["potions"] > 0:
                 w.demo_choice = "potion"
             else:
                 w.demo_choice = "attack"
         action = w.wait_for(draw_scene, buttons)
+        if action == "rest":
+            self.rest_used = True
+            self.rest_scene(draw_scene)
         if action == "attack":
             score = self.timing_bar(draw_scene)
             self.accuracy = TIMING_BASE + TIMING_RANGE * score
             self.room_timing.append(score)
             w.flashes.start("lunge", 0.3)
-            w.scenery.kick = 25
         self.last_action = action
         self.previous_hp = view["hp"]
         self.previous_ghosts = list(ghosts)
         return action
+
+    def rest_scene(self, draw_scene):
+        """The player sits down for COVER_SECONDS while Walt steps in front and swings his wrench.
+        (For the game rules this is ONE turn: see the "rest" action in game/engine.py.)"""
+        w = self.window
+        w.speak(REST_LINE)
+        w.flashes.start("walt_cover", COVER_SECONDS)
+        elapsed = 0.0
+        frame = 0
+        while elapsed < COVER_SECONDS:
+            dt = w.tick()
+            elapsed += dt
+            draw_scene(dt)
+            left = max(1, int(COVER_SECONDS - elapsed + 0.999))
+            draw_text(w.canvas, f"Resting...  {left}", w.font_big, COLORS["heal"], 170, 200, center=True)
+            w.present(capture=frame % 10 == 0)
+            frame += 1
+        w.flashes.until.pop("walt_cover", None)
 
     def timing_bar(self, draw_scene):
         """A marker sweeps across a bar; the player stops it. Output: timing score 0..1 (1 = centre)."""
@@ -727,7 +854,11 @@ class WindowPolicy(HumanPolicy):
         if self.previous_hp is None:
             return
         change = view["hp"] - self.previous_hp
-        if change < 0:
+        if self.last_action == "rest":
+            sign = "+" if change >= 0 else ""
+            w.popup(f"{sign}{change:.0f} HP rested", COLORS["heal"], 150, 210)
+            w.sounds.play("heal")
+        elif change < 0:
             blocked = self.last_action == "defend"
             w.popup(f"{change:.0f} HP blocked!" if blocked else f"{change:.0f} HP", COLORS["damage"], 150, 210)
             w.shake.start(3 if blocked else 8, 0.25)
@@ -763,6 +894,8 @@ class WindowPolicy(HumanPolicy):
             damage = old_hp - hp
             walt_hit = w.help_mode == "fight" and (abs(damage - C.COMPANION_DAMAGE) < 0.01 or
                                                    abs(damage - C.PLAYER_ATTACK - C.COMPANION_DAMAGE) < 0.01)
+            if self.last_action == "rest" and damage > 0:      # the damage came from Walt covering you
+                walt_hit = True
             if walt_hit:                                   # Walt's wrench (6 damage) hit this ghost
                 w.flashes.start("walt_attack", 0.35)
                 w.speak(WALT_HITS[int(time.time()) % len(WALT_HITS)])
@@ -782,6 +915,8 @@ class WindowPolicy(HumanPolicy):
         w = self.window
         self.previous_hp = None        # the room restarts with fresh HP, that is not healing
         self.previous_ghosts = None
+        self.rest_used = False         # a new attempt: rest is allowed again (as in the engine)
+        self.rest_offered = False
         w.sounds.play("death")
 
         def draw_scene(dt):
@@ -798,6 +933,8 @@ class WindowPolicy(HumanPolicy):
         self.previous_hp = None        # resting between rooms heals you, that is not Walt
         self.previous_ghosts = None
         self.previous_wind_up = False
+        self.rest_used = False
+        self.rest_offered = False
         self.window.popups = []
 
 
@@ -851,6 +988,39 @@ def ending_scene(w, outcome):
         frame += 1
 
 
+def save_game(rows, out):
+    """Add one finished game to the CSV. The old file is read and joined with the new rows, so the
+    columns always line up, even if a newer version of the game saves an extra column."""
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    table = pd.DataFrame(rows)
+    if out.exists():
+        table = pd.concat([pd.read_csv(out), table], ignore_index=True)
+    table.to_csv(out, index=False)
+
+
+def play_one_game(window, story, args):
+    """Title -> intro -> the run -> ending. Output: (rows, director, seed) of the finished game."""
+    window.room_label = ""
+    window.bubble = ""
+    window.scenery.world_x = 0.0
+    window.set_beat = None
+    director = title_menu(window, window.director_name)
+    window.director_name = director
+    window.room_label = "Hollowmere Park, midnight"
+    window.voice.speak(INTRO_LINE, muted=window.sounds.muted)
+    window.card("Midnight", [
+        ("You wake up inside Hollowmere Park. The gates are locked.", COLORS["text"]),
+        ("An old mechanic with a flashlight finds you. 'Name's Walt. Stick with me, I know the way out.'",
+         COLORS["flashlight"])], button_label="Follow Walt  [Space]")
+    seed = random.randrange(10**6)
+    policy = WindowPolicy(window)
+    controller = WindowNarrator(CONTROLLERS[director](rng=random.Random(seed)), story, window, policy)
+    rows = play_run(controller, policy, story, seed)
+    window.last_result = controller.last_result
+    return rows, director, seed
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--controller", default="rule", choices=WINDOW_DIRECTORS, help="pre-selected in the menu")
@@ -862,44 +1032,36 @@ def main():
         os.environ["SDL_AUDIODRIVER"] = "dummy"       # demo runs silently
 
     story = Story()
-    seed = random.randrange(10**6)
-    player_id = uuid.uuid4().hex[:6]       # anonymous, not linked to any name
+    player_id = uuid.uuid4().hex[:6]       # anonymous, not linked to any name (same for all games this session)
     window = GameWindow(args.controller, demo_dir=args.demo, sound_on=not args.no_sound)
     window.sounds.start_music()
-    director = title_menu(window, args.controller)
-    window.director_name = director
-    window.room_label = "Hollowmere Park, midnight"
-    window.voice.speak(INTRO_LINE, muted=window.sounds.muted)
-    window.card("Midnight", [
-        ("You wake up inside Hollowmere Park. The gates are locked.", COLORS["text"]),
-        ("An old mechanic with a flashlight finds you. 'Name's Walt. Stick with me, I know the way out.'",
-         COLORS["flashlight"])], button_label="Follow Walt  [Space]")
-
-    policy = WindowPolicy(window)
-    controller = WindowNarrator(CONTROLLERS[director](rng=random.Random(seed)), story, window, policy)
-    rows = play_run(controller, policy, story, seed)
-
-    outcome = rows[-1]["run_outcome"]
-    window.sounds.play("win" if outcome == "escaped" else "death")
-    ending_scene(window, outcome)
-    window.room_label = "The end"
-    paragraphs = [(ENDINGS[outcome], COLORS["text"])]
-    if controller.last_result:
-        paragraphs.append((f"Last attraction: {controller.last_result[0]}", COLORS[controller.last_result[1]]))
-    window.card("Escaped!" if outcome == "escaped" else "Trapped", paragraphs,
-                button_label="Close  [Space]")
+    while True:
+        try:
+            rows, director, seed = play_one_game(window, story, args)
+        except RestartGame:                # pause menu -> Restart: this game is not saved
+            continue
+        outcome = rows[-1]["run_outcome"]
+        if args.demo is None:              # save first, so quitting on the end screen keeps the game
+            for r in rows:
+                r.update({"run_id": f"window-{player_id}-{seed}", "controller": director,
+                          "bot_type": "human", "player_id": player_id})
+            save_game(rows, args.out)
+            print(f"Game saved to {args.out}")
+        window.sounds.play("win" if outcome == "escaped" else "death")
+        ending_scene(window, outcome)
+        window.room_label = "The end"
+        paragraphs = [(ENDINGS[outcome], COLORS["text"])]
+        if window.last_result:
+            paragraphs.append((f"Last attraction: {window.last_result[0]}", COLORS[window.last_result[1]]))
+        choice = window.card("Escaped!" if outcome == "escaped" else "Trapped", paragraphs,
+                             choices=[("again", "Play again  [Space]", [pygame.K_SPACE, pygame.K_RETURN]),
+                                      ("quit", "Quit  [Q]", [pygame.K_q])])
+        if args.demo is not None:
+            print(f"demo finished ({outcome}), screenshots in {args.demo}")
+            break
+        if choice == "quit":
+            break
     pygame.quit()
-
-    if args.demo is not None:
-        print(f"demo finished ({outcome}), screenshots in {args.demo}")
-        return
-    for r in rows:
-        r.update({"run_id": f"window-{player_id}-{seed}", "controller": director,
-                  "bot_type": "human", "player_id": player_id})
-    out = Path(args.out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(rows).to_csv(out, mode="a", header=not out.exists(), index=False)
-    print(f"Game saved to {out}")
 
 
 if __name__ == "__main__":
