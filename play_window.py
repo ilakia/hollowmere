@@ -43,6 +43,7 @@ from window.park_map import draw_park_map
 from window.scenery import Scenery
 from window.setpieces import draw_set_piece
 from window.sound import SoundBank
+from window.voice import WaltVoice
 
 FPS = 30
 POPUP_SECONDS = 1.4
@@ -65,6 +66,11 @@ WALT_BUBBLE = {
 WALK_DISTANCE = 450      # pixels of park walked to reach the next attraction
 WALK_SPEED = 230         # pixels per second while RIGHT is held (about 2 seconds per attraction)
 APPEAR_SECONDS = 1.6     # the ghosts fade in, then the fight starts
+INTRO_LINE = "Name's Walt. Stick with me, I know the way out."
+GATE_LINE = "The gate is just ahead. Nearly out, kid."
+REVEAL_LINE = "I never left this park, kid. Neither will you."
+DEFEND_LINE = "It's glowing, DEFEND!"
+HEAL_LINE = "You're hurt. Hold still, kid."
 WALT_HITS = ["Take that!", "Back off!", "Not my kid!", "Hah!"]
 TRAVEL_LINES = ["This way, kid.", "Stay close.", "Don't touch anything that moves.", "Almost there.",
                 "I used to fix these rides.", "Hear that? Keep walking."]
@@ -129,6 +135,9 @@ class GameWindow:
         self.shake = Shake()
         self.flashes = Flashes()
         self.sounds = SoundBank(enabled=sound_on and demo_dir is None)
+        spoken = ([INTRO_LINE, DEFEND_LINE, HEAL_LINE, GATE_LINE] +      # most needed first
+                  list(WALT_BUBBLE.values()) + WALT_HITS + TRAVEL_LINES)
+        self.voice = WaltVoice(spoken, [REVEAL_LINE], enabled=sound_on and demo_dir is None)
         self.director_name = director_name
         self.room_label = ""
         self.help_mode = None
@@ -220,6 +229,14 @@ class GameWindow:
         for button in buttons:
             button.draw(self.screen, self.font)
         pygame.display.flip()
+
+    def speak(self, text, ghost=False):
+        """Walt says a line: it appears in his speech bubble and is spoken aloud (window/voice.py).
+        Saying the line that is already showing does nothing, so he never repeats himself."""
+        if text == self.bubble:
+            return
+        self.bubble = text
+        self.voice.speak(text, ghost=ghost, muted=self.sounds.muted)
 
     def draw_piece(self, player_x, walt_x, show_walt):
         """The current attraction's scene piece. It slides in from the right while walking up to it
@@ -407,12 +424,12 @@ class WindowNarrator:
         moved = False
         frame = 0
         if state["is_finale"]:
-            w.bubble = "The gate is just ahead. Nearly out, kid."
+            w.speak(GATE_LINE)
         elif w.help_mode != self.last_mode:            # Walt explains his new behaviour once
-            w.bubble = WALT_BUBBLE.get(w.help_mode, "")
+            w.speak(WALT_BUBBLE.get(w.help_mode, ""))
             self.last_mode = w.help_mode
         else:
-            w.bubble = TRAVEL_LINES[state["room_index"] % len(TRAVEL_LINES)]
+            w.speak(TRAVEL_LINES[state["room_index"] % len(TRAVEL_LINES)])
         while True:
             dt = w.tick()
             stepping = False
@@ -426,7 +443,7 @@ class WindowNarrator:
                     appear = 0.0
                     w.sounds.play("charge")
                     if state["is_finale"]:
-                        w.bubble = "I never left this park, kid. Neither will you."
+                        w.speak(REVEAL_LINE, ghost=True)
             else:
                 appear += dt
                 if appear >= APPEAR_SECONDS:
@@ -564,8 +581,8 @@ class WindowPolicy(HumanPolicy):
             w.sounds.play("charge")
         self.previous_wind_up = charging
         if charging and view["warning"]:
-            w.bubble = "It's glowing, DEFEND!"
-        elif w.bubble == "It's glowing, DEFEND!":      # the glow is over: back to his normal line
+            w.speak(DEFEND_LINE)
+        elif w.bubble == DEFEND_LINE:      # the glow is over: back to his normal line
             w.bubble = WALT_BUBBLE.get(w.help_mode, "")
 
         def draw_scene(dt):
@@ -709,7 +726,7 @@ class WindowPolicy(HumanPolicy):
             w.popup(f"+{change:.0f} Walt heals", COLORS["heal"], 150, 210)
             w.flashes.start("walt_heal", 0.7)
             w.particles.rise(170, GROUND_Y - 60, COLORS["heal"])
-            w.bubble = "You're hurt. Hold still, kid."
+            w.speak(HEAL_LINE)
             w.sounds.play("heal")
         self.show_ghost_hits(view["enemies"])
 
@@ -733,7 +750,7 @@ class WindowPolicy(HumanPolicy):
                                                    abs(damage - C.PLAYER_ATTACK - C.COMPANION_DAMAGE) < 0.01)
             if walt_hit:                                   # Walt's wrench (6 damage) hit this ghost
                 w.flashes.start("walt_attack", 0.35)
-                w.bubble = WALT_HITS[int(time.time()) % len(WALT_HITS)]
+                w.speak(WALT_HITS[int(time.time()) % len(WALT_HITS)])
             if hp < old_hp:
                 x = ghost_x(i, len(ghosts))
                 w.popup(f"-{old_hp - hp:.0f}", COLORS["text"], x + 50, 300)
@@ -787,6 +804,7 @@ def main():
     director = title_menu(window, args.controller)
     window.director_name = director
     window.room_label = "Hollowmere Park, midnight"
+    window.voice.speak(INTRO_LINE, muted=window.sounds.muted)
     window.card("Midnight", [
         ("You wake up inside Hollowmere Park. The gates are locked.", COLORS["text"]),
         ("An old mechanic with a flashlight finds you. 'Name's Walt. Stick with me, I know the way out.'",

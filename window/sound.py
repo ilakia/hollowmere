@@ -82,6 +82,7 @@ class SoundBank:
             for name, wave in build_sounds().items():
                 self.sounds[name] = self.to_sound(wave, channels)
             self.music = self.to_sound(make_music(), channels)
+            self.music.set_volume(0.45)                    # quieter, so Walt's voice stays clear
         except (pygame.error, NotImplementedError):      # no sound device: play silently
             self.sounds = {}
             self.music = None

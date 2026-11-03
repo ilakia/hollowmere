@@ -51,7 +51,7 @@ python llm_experiment.py --controller llm_risk --games 25 --batch 2 --pause 180 
 | `robustness_experiment.py` | Held-out bot type (re-learn without one type, test on it) and +/-20% changes to the game |
 | `play.py` | Human play in the terminal, telemetry saved under an anonymous ID |
 | `play_window.py` | Game window (pygame): title menu (pick the director), walk through each zone with Walt (hold RIGHT), ghosts appear at each attraction and the room's fight starts, park map per zone, timing bar for attacks; games saved to `data/window_runs.csv`; `--demo` plays by itself for testing |
-| `window/` | Pixel-art sprites (`art.py`), layered park per zone with lighting (`scenery.py`), a scene piece for every attraction (`setpieces.py`), particles, shake, fog (`effects.py`), sounds and music generated in code (`sound.py`), park map (`park_map.py`) |
+| `window/` | Pixel-art sprites (`art.py`), layered park per zone with lighting (`scenery.py`), a scene piece for every attraction (`setpieces.py`), particles, shake, fog (`effects.py`), sounds and music generated in code (`sound.py`), Walt's spoken voice via macOS text-to-speech (`voice.py`, cached in `data/voice/`), park map (`park_map.py`) |
 
 **Seeds:** 0–1999 training (tables, tuning, bandit learning), 50000+ validation (bandit exploration strength), 100000–100999 final director test, 200000+ failure-predictor test. Nothing was tuned on test seeds.
 
