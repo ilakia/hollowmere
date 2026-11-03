@@ -36,10 +36,11 @@ from game.controllers import CONTROLLERS
 from game.engine import play_run
 from game.story import Story
 from play import HumanPolicy
-from window.art import (COLORS, HEIGHT, WIDTH, Button, draw_bar, draw_bubble, draw_glow, draw_living_background,
-                        draw_text, load_sprites, make_background, wrap_text)
+from window.art import (COLORS, HEIGHT, WIDTH, Button, draw_bar, draw_bubble, draw_glow, draw_text, load_sprites,
+                        wrap_text)
 from window.effects import Flashes, Fog, Particles, Shake, vignette
 from window.park_map import draw_park_map
+from window.scenery import Scenery
 from window.sound import SoundBank
 
 FPS = 30
@@ -96,7 +97,8 @@ class GameWindow:
         self.font_big = pygame.font.SysFont(None, 44)
         self.font_mark = pygame.font.SysFont(None, 80)
         self.font_title = pygame.font.SysFont(None, 110)
-        self.background = make_background()
+        self.scenery = Scenery()         # layered park per zone, with lighting
+        self.zone = 1
         self.sprites = load_sprites()
         self.fog = Fog()
         self.vignette = vignette()
@@ -145,6 +147,9 @@ class GameWindow:
             outline = pygame.transform.flip(outline, True, False)
         left = x - image.get_width() // 2
         top = y_bottom - image.get_height() + dy
+        shadow = pygame.Surface((image.get_width(), 16), pygame.SRCALPHA)
+        pygame.draw.ellipse(shadow, (0, 0, 0, 110), shadow.get_rect())
+        self.canvas.blit(shadow, (left, y_bottom - 8))
         for ox, oy in ((-2, 0), (2, 0), (0, -2), (0, 2)):        # thin light outline: stands out from the night
             self.canvas.blit(outline, (left + ox, top + oy))
         self.canvas.blit(image, (left, top))
@@ -204,8 +209,9 @@ class GameWindow:
         """A story or result card. side = function(surface, rect) drawing extra content on the right
         (the park map). Waits for Continue."""
         def draw_scene(dt):
-            draw_living_background(self.canvas, self.background)
+            self.scenery.draw_back(self.canvas, self.zone)
             self.fog.draw(self.canvas, dt)
+            self.scenery.draw_front(self.canvas, self.zone, [])
             self.draw_top_bar(self.canvas)
             panel = pygame.Rect(60, 70, 840, 370)
             pygame.draw.rect(self.canvas, COLORS["panel"], panel, border_radius=14)
@@ -231,16 +237,17 @@ def title_menu(w, director):
     lineup = ["player", "walt", "wisp", "animatronic", "wraith"]
 
     def draw_scene(dt):
-        draw_living_background(w.canvas, w.background)
+        w.scenery.draw_back(w.canvas, 1)
+        for i, name in enumerate(lineup):
+            bob = int(5 * math.sin(time.time() * 2 + i))
+            w.draw_sprite(name, 230 + i * 125, 345, dy=bob if i >= 2 else 0)
         w.fog.draw(w.canvas, dt)
+        w.scenery.draw_front(w.canvas, 1, [(355, 260, 160, COLORS["flashlight"])])
         flicker = 200 + int(55 * math.sin(time.time() * 3))
         draw_glow(w.canvas, WIDTH // 2, 120, 220, (120, 60, 160), strength=18)
         draw_text(w.canvas, "HOLLOWMERE", w.font_title, (flicker, 220, 255), WIDTH // 2, 115, center=True)
         draw_text(w.canvas, "One night in a haunted theme park. Walt knows the way out... or does he?",
                   w.font, COLORS["dim_text"], WIDTH // 2, 175, center=True)
-        for i, name in enumerate(lineup):
-            bob = int(5 * math.sin(time.time() * 2 + i))
-            w.draw_sprite(name, 230 + i * 125, 345, dy=bob if i >= 2 else 0)
         draw_text(w.canvas, "A attack (stop the timing bar with Space)   ·   D defend when a ghost glows   ·   "
                   "P potion   ·   M mute", w.font_small, COLORS["dim_text"], WIDTH // 2, 365, center=True)
 
@@ -284,6 +291,7 @@ class WindowNarrator:
         zone = C.ZONE_NAMES[state["zone"]]
         w.room_label = f"Room {state['room_index'] + 1}/{C.ROOMS_PER_RUN}  ·  {zone}: {beat['title']}"
         w.is_finale = state["is_finale"]
+        w.zone = state["zone"]
         w.help_mode = None if state["is_finale"] else decision.get("help_mode")
         w.difficulty = decision.get("difficulty") if decision.get("difficulty") in C.DIFFICULTY else "normal"
         paragraphs = [(beat["text"], COLORS["text"])]
@@ -348,33 +356,46 @@ class WindowPolicy(HumanPolicy):
             w.bubble = WALT_BUBBLE.get(w.help_mode, "")
 
         def draw_scene(dt):
+            # 1) scenery behind, 2) characters, 3) fog and lighting, 4) interface on top (always readable)
             c = w.canvas
-            draw_living_background(c, w.background)
-            w.fog.draw(c, dt)
-            w.draw_top_bar(c)
+            w.scenery.draw_back(c, w.zone)
+            lights = []
             lunge = w.flashes.progress("lunge", 0.3)
             dx = int(40 * math.sin(math.pi * lunge)) if lunge is not None else 0   # step forward and back
             w.draw_sprite("player", 170 + dx, GROUND_Y, flash=w.flashes.active("player_hit"))
-            draw_bar(c, 110, GROUND_Y + 12, 120, 12, view["hp"] / view["max_hp"])
-            draw_text(c, f"{view['hp']:.0f}/{view['max_hp']} HP", w.font_small, COLORS["text"], 110, GROUND_Y + 30)
-            for i in range(view["potions"]):                                       # one bottle per potion
-                pygame.draw.rect(c, COLORS["potion"], (110 + i * 18, GROUND_Y + 52, 12, 18), border_radius=3)
             if not w.is_finale:
                 bob = int(2 * math.sin(time.time() * 2))
                 w.draw_sprite("walt", 300, GROUND_Y, dy=bob)
-                draw_text(c, f"Walt: {w.help_mode}", w.font_small, COLORS["dim_text"], 262, GROUND_Y + 12)
-                if w.bubble:
-                    draw_bubble(c, w.font_small, w.bubble, 300, 245)
+                lights.append((380, GROUND_Y - 70, 150, COLORS["flashlight"]))    # Walt's flashlight
+            ghost_marks = []
             for i, (kind, hp) in enumerate(ghosts):
                 x = ghost_x(i, len(ghosts))
                 glowing = charging and kind in ("wraith", "walt")
                 if glowing:
                     draw_glow(c, x, GROUND_Y - 50, 100, COLORS["charge"], strength=45)
+                    lights.append((x, GROUND_Y - 60, 190, COLORS["charge"]))
                     x = x + int(5 * math.sin(time.time() * 40))                      # fast shaking
-                    draw_text(c, "!", w.font_mark, COLORS["charge"], x, GROUND_Y - 175, center=True)
+                elif kind == "wisp":
+                    lights.append((x, GROUND_Y - 40, 90, (150, 200, 255)))          # wisps glow softly
                 bob = int(5 * math.sin(time.time() * 3 + i)) if kind in ("wisp", "wraith") else 0
                 sprite = "walt_ghost" if kind == "walt" else kind
                 w.draw_sprite(sprite, x, GROUND_Y, flash=w.flashes.active(f"ghost{i}"), flip=True, dy=bob)
+                ghost_marks.append((kind, hp, x, glowing))
+            w.fog.draw(c, dt)
+            w.scenery.draw_front(c, w.zone, lights, finale=w.is_finale)
+
+            w.draw_top_bar(c)
+            draw_bar(c, 110, GROUND_Y + 12, 120, 12, view["hp"] / view["max_hp"])
+            draw_text(c, f"{view['hp']:.0f}/{view['max_hp']} HP", w.font_small, COLORS["text"], 110, GROUND_Y + 30)
+            for i in range(view["potions"]):                                       # one bottle per potion
+                pygame.draw.rect(c, COLORS["potion"], (110 + i * 18, GROUND_Y + 52, 12, 18), border_radius=3)
+            if not w.is_finale:
+                draw_text(c, f"Walt: {w.help_mode}", w.font_small, COLORS["dim_text"], 262, GROUND_Y + 12)
+                if w.bubble:
+                    draw_bubble(c, w.font_small, w.bubble, 300, 245)
+            for kind, hp, x, glowing in ghost_marks:
+                if glowing:
+                    draw_text(c, "!", w.font_mark, COLORS["charge"], x, GROUND_Y - 175, center=True)
                 full_hp = C.ENEMY_TYPES[kind]["hp"] * hp_mult
                 draw_bar(c, x - 40, GROUND_Y + 12, 80, 10, hp / full_hp)
                 draw_text(c, kind, w.font_small, COLORS["dim_text"], x, GROUND_Y + 34, center=True)
@@ -401,6 +422,7 @@ class WindowPolicy(HumanPolicy):
             self.accuracy = TIMING_BASE + TIMING_RANGE * score
             self.room_timing.append(score)
             w.flashes.start("lunge", 0.3)
+            w.scenery.kick = 25
         self.last_action = action
         self.previous_hp = view["hp"]
         self.previous_ghosts = list(ghosts)
