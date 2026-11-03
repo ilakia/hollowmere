@@ -12,10 +12,10 @@ import time
 import pygame
 
 WIDTH, HEIGHT = 960, 540
-SCALE = 5
+SCALE = 7
 
 COLORS = {
-    "sky_top": (10, 8, 26), "sky_bottom": (46, 22, 60), "ground": (24, 20, 30), "ground_line": (40, 34, 50),
+    "sky_top": (26, 24, 62), "sky_bottom": (88, 56, 108), "ground": (52, 44, 62), "ground_line": (72, 62, 84),
     "text": (235, 230, 220), "dim_text": (160, 150, 170), "panel": (18, 16, 30),
     "hp_good": (90, 200, 110), "hp_low": (220, 90, 80), "bar_back": (60, 55, 70),
     "damage": (240, 90, 80), "heal": (110, 230, 140), "glow": (190, 120, 255), "charge": (255, 190, 60),
@@ -167,10 +167,14 @@ def ghostly(color):
 
 
 def load_sprites():
-    """All sprite images plus their white hit-flash versions. Output: dict name -> (image, flash)."""
+    """All sprite images plus their white hit-flash and light-outline versions.
+    Output: dict name -> (image, flash, outline)."""
     images = {name: make_sprite(rows) for name, rows in SPRITES.items()}
     images["walt_ghost"] = make_sprite(WALT, ghostly)
-    return {name: (img, silhouette(img, (255, 255, 255))) for name, img in images.items()}
+    sprites = {}
+    for name, img in images.items():
+        sprites[name] = (img, silhouette(img, (255, 255, 255)), silhouette(img, (255, 235, 190)))
+    return sprites
 
 
 # ---------------------------------------------------------------- background
@@ -196,10 +200,33 @@ def make_background():
         for i in range(-3, 4, 2):
             pygame.draw.line(bg, stripe, (x, 385 - height), (x + i * 26, 385), 6)
     pygame.draw.rect(bg, COLORS["ground"], (0, 385, WIDTH, HEIGHT - 385))
+    for x in (60, 900):                                                         # two old lampposts
+        pygame.draw.rect(bg, (30, 26, 36), (x - 4, 230, 8, 155))
+        pygame.draw.rect(bg, (30, 26, 36), (x - 14, 222, 28, 12), border_radius=4)
+        pygame.draw.circle(bg, (255, 220, 150), (x, 238), 7)
     for y in range(395, HEIGHT, 18):                                            # cobblestones
         for x in range((y // 18) % 2 * 20, WIDTH, 40):
             pygame.draw.ellipse(bg, COLORS["ground_line"], (x, y, 34, 12), width=1)
     return bg
+
+
+_light_layer = None
+
+
+def light_pools():
+    """Warm lamp light on the ground where the characters stand (drawn once, then reused)."""
+    global _light_layer
+    if _light_layer is None:
+        _light_layer = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        for x, width in ((230, 420), (730, 420)):
+            for step in range(10):
+                w = int(width * (1 - step / 12))
+                h = int(90 * (1 - step / 12))
+                pygame.draw.ellipse(_light_layer, (255, 210, 150, 9), (x - w // 2, 385 - h // 3, w, h))
+            for step in range(8):                                    # soft cone of light from above
+                w = int(width * 0.8 * (1 - step / 10))
+                pygame.draw.ellipse(_light_layer, (255, 220, 170, 5), (x - w // 2, 120 + step * 10, w, 290))
+    return _light_layer
 
 
 STARS = [(random.Random(i).randrange(WIDTH), random.Random(i + 99).randrange(260)) for i in range(70)]
@@ -209,6 +236,7 @@ BULBS = [(20 + i * 52, 52 + int(14 * math.sin(i * 0.9))) for i in range(19)]
 def draw_living_background(surface, background):
     """Background plus the moving parts: twinkling stars and flickering fairground bulbs."""
     surface.blit(background, (0, 0))
+    surface.blit(light_pools(), (0, 0))
     now = time.time()
     for i, (x, y) in enumerate(STARS):
         brightness = 140 + int(110 * (0.5 + 0.5 * math.sin(now * (1 + i % 5) + i)))

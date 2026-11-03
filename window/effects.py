@@ -90,8 +90,8 @@ class Fog:
 
     def __init__(self, count=7):
         rng = random.Random(3)
-        self.banks = [[rng.uniform(-200, WIDTH), rng.uniform(330, 420), rng.uniform(220, 380),
-                       rng.uniform(8, 22), rng.randint(14, 30)] for _ in range(count)]
+        self.banks = [[rng.uniform(-200, WIDTH), rng.uniform(395, 470), rng.uniform(220, 380),
+                       rng.uniform(8, 22), rng.randint(8, 16)] for _ in range(count)]
         self.layer = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
 
     def draw(self, surface, dt):
@@ -109,6 +109,6 @@ def vignette():
     """Dark edges around the picture, drawn once and laid over every frame (spooky look)."""
     layer = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     for i in range(40):
-        alpha = int(150 * (1 - i / 40) ** 2)
+        alpha = int(80 * (1 - i / 40) ** 2)
         pygame.draw.rect(layer, (0, 0, 0, alpha), (i * 3, i * 3, WIDTH - i * 6, HEIGHT - i * 6), width=3)
     return layer

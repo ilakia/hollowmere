@@ -137,12 +137,17 @@ class GameWindow:
 
     def draw_sprite(self, name, x, y_bottom, flash=False, flip=False, dy=0):
         """Draw a sprite standing on the ground at x (its centre). flash = white hit silhouette."""
-        image, white = self.sprites[name]
+        image, white, outline = self.sprites[name]
         if flash:
             image = white
         if flip:
             image = pygame.transform.flip(image, True, False)
-        self.canvas.blit(image, (x - image.get_width() // 2, y_bottom - image.get_height() + dy))
+            outline = pygame.transform.flip(outline, True, False)
+        left = x - image.get_width() // 2
+        top = y_bottom - image.get_height() + dy
+        for ox, oy in ((-2, 0), (2, 0), (0, -2), (0, 2)):        # thin light outline: stands out from the night
+            self.canvas.blit(outline, (left + ox, top + oy))
+        self.canvas.blit(image, (left, top))
 
     # ---- drawing loop
     def wait_for(self, draw_scene, buttons):
@@ -235,7 +240,7 @@ def title_menu(w, director):
                   w.font, COLORS["dim_text"], WIDTH // 2, 175, center=True)
         for i, name in enumerate(lineup):
             bob = int(5 * math.sin(time.time() * 2 + i))
-            w.draw_sprite(name, 250 + i * 115, 330, dy=bob if i >= 2 else 0)
+            w.draw_sprite(name, 230 + i * 125, 345, dy=bob if i >= 2 else 0)
         draw_text(w.canvas, "A attack (stop the timing bar with Space)   ·   D defend when a ghost glows   ·   "
                   "P potion   ·   M mute", w.font_small, COLORS["dim_text"], WIDTH // 2, 365, center=True)
 
@@ -359,14 +364,14 @@ class WindowPolicy(HumanPolicy):
                 w.draw_sprite("walt", 300, GROUND_Y, dy=bob)
                 draw_text(c, f"Walt: {w.help_mode}", w.font_small, COLORS["dim_text"], 262, GROUND_Y + 12)
                 if w.bubble:
-                    draw_bubble(c, w.font_small, w.bubble, 300, 270)
+                    draw_bubble(c, w.font_small, w.bubble, 300, 245)
             for i, (kind, hp) in enumerate(ghosts):
                 x = ghost_x(i, len(ghosts))
                 glowing = charging and kind in ("wraith", "walt")
                 if glowing:
                     draw_glow(c, x, GROUND_Y - 50, 100, COLORS["charge"], strength=45)
                     x = x + int(5 * math.sin(time.time() * 40))                      # fast shaking
-                    draw_text(c, "!", w.font_mark, COLORS["charge"], x, GROUND_Y - 150, center=True)
+                    draw_text(c, "!", w.font_mark, COLORS["charge"], x, GROUND_Y - 175, center=True)
                 bob = int(5 * math.sin(time.time() * 3 + i)) if kind in ("wisp", "wraith") else 0
                 sprite = "walt_ghost" if kind == "walt" else kind
                 w.draw_sprite(sprite, x, GROUND_Y, flash=w.flashes.active(f"ghost{i}"), flip=True, dy=bob)
