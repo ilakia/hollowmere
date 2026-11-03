@@ -118,13 +118,6 @@ def make_mid_layer(zone, mood, font):
         opening = tuple(c // 2 for c in mood["mid"])
         pygame.draw.rect(layer, opening, (x + 18, top + 46, width - 36, 34), border_radius=4)   # counter opening
         pygame.draw.rect(layer, mood["accent"], (x + 30, top + 72, 10, 8))     # a prize on the counter
-    sign = font.render(mood["sign"], True, mood["accent"])            # zone sign high on the right, above the action
-    board = pygame.Rect(0, 0, sign.get_width() + 24, sign.get_height() + 12)
-    board.center = (720, 128)
-    pygame.draw.rect(layer, mood["mid"], board, border_radius=6)
-    pygame.draw.rect(layer, mood["accent"], board, width=2, border_radius=6)
-    pygame.draw.line(layer, mood["mid"], (board.centerx, board.bottom), (board.centerx, GROUND_Y), 4)
-    layer.blit(sign, (board.x + 12, board.y + 6))
     return layer
 
 

@@ -41,6 +41,7 @@ from window.art import (COLORS, HEIGHT, WIDTH, Button, draw_bar, draw_bubble, dr
 from window.effects import Flashes, Fog, Particles, Shake, vignette
 from window.park_map import draw_park_map
 from window.scenery import Scenery
+from window.setpieces import draw_set_piece
 from window.sound import SoundBank
 
 FPS = 30
@@ -64,6 +65,7 @@ WALT_BUBBLE = {
 WALK_DISTANCE = 450      # pixels of park walked to reach the next attraction
 WALK_SPEED = 230         # pixels per second while RIGHT is held (about 2 seconds per attraction)
 APPEAR_SECONDS = 1.6     # the ghosts fade in, then the fight starts
+WALT_HITS = ["Take that!", "Back off!", "Not my kid!", "Hah!"]
 TRAVEL_LINES = ["This way, kid.", "Stay close.", "Don't touch anything that moves.", "Almost there.",
                 "I used to fix these rides.", "Hear that? Keep walking."]
 ZONE_INTROS = {
@@ -118,6 +120,8 @@ class GameWindow:
         self.font_title = pygame.font.SysFont(None, 110)
         self.scenery = Scenery()         # layered park per zone, with lighting
         self.zone = 1
+        self.set_beat = None             # attraction whose scene piece is shown (window/setpieces.py)
+        self.set_target = 0.0            # where along the walk that attraction stands
         self.sprites = load_sprites()
         self.fog = Fog()
         self.vignette = vignette()
@@ -216,6 +220,16 @@ class GameWindow:
         for button in buttons:
             button.draw(self.screen, self.font)
         pygame.display.flip()
+
+    def draw_piece(self, player_x, walt_x, show_walt):
+        """The current attraction's scene piece. It slides in from the right while walking up to it
+        (same speed as the ground) and stands behind the ghosts during the fight."""
+        if self.set_beat is None:
+            return
+        cx = 640 + (self.set_target - self.scenery.world_x) * 0.8
+        ctx = {"t": time.time(), "sprites": self.sprites, "player_x": player_x, "walt_x": walt_x,
+               "show_walt": show_walt, "mood": None}
+        draw_set_piece(self.canvas, self.set_beat, cx, ctx, self.font_small)
 
     def tick(self):
         """Handle window events for one frame of a moving scene. Output: seconds since the last frame
@@ -386,6 +400,8 @@ class WindowNarrator:
         """Walk to the attraction (hold RIGHT), then the ghosts fade in and the fight starts."""
         w = self.window
         start_world = w.scenery.world_x
+        w.set_beat = beat["id"]
+        w.set_target = start_world + WALK_DISTANCE
         walked = 0.0
         appear = None                    # seconds since the ghosts started to appear (None = still walking)
         moved = False
@@ -427,6 +443,7 @@ class WindowNarrator:
         w.scenery.draw_back(c, w.zone)
         k = 0.0 if appear is None else min(1.0, appear / 0.6)          # slide into fight positions
         player_x = int(230 + (170 - 230) * k)
+        w.draw_piece(player_x, int(110 + (300 - 110) * k), not finale)
         bob = int(abs(math.sin(walked / 20)) * 7) if stepping else 0  # head bobs while walking
         lights = []
         w.draw_sprite("player", player_x, GROUND_Y, dy=-bob)
@@ -555,14 +572,28 @@ class WindowPolicy(HumanPolicy):
             # 1) scenery behind, 2) characters, 3) fog and lighting, 4) interface on top (always readable)
             c = w.canvas
             w.scenery.draw_back(c, w.zone)
+            walt_x = 300
+            attack = w.flashes.progress("walt_attack", 0.35)
+            if attack is not None:
+                walt_x += int(70 * math.sin(math.pi * attack))                    # Walt lunges at the ghost
+            heal = w.flashes.progress("walt_heal", 0.7)
+            if heal is not None:
+                walt_x -= int(80 * math.sin(math.pi * heal))                      # Walt rushes over to you
+            w.draw_piece(170, walt_x, not w.is_finale)
             lights = []
             lunge = w.flashes.progress("lunge", 0.3)
             dx = int(40 * math.sin(math.pi * lunge)) if lunge is not None else 0   # step forward and back
             w.draw_sprite("player", 170 + dx, GROUND_Y, flash=w.flashes.active("player_hit"))
             if not w.is_finale:
                 bob = int(2 * math.sin(time.time() * 2))
-                w.draw_sprite("walt", 300, GROUND_Y, dy=bob)
-                lights.append((380, GROUND_Y - 70, 150, COLORS["flashlight"]))    # Walt's flashlight
+                w.draw_sprite("walt", walt_x, GROUND_Y, dy=bob)
+                lights.append((walt_x + 80, GROUND_Y - 70, 150, COLORS["flashlight"]))   # Walt's flashlight
+                if attack is not None:                                            # his wrench swings down
+                    angle = -1.2 + 2.0 * attack
+                    hand = (walt_x + 30, GROUND_Y - 70)
+                    tip = (hand[0] + int(46 * math.cos(angle)), hand[1] + int(46 * math.sin(angle)))
+                    pygame.draw.line(c, (170, 170, 185), hand, tip, 7)
+                    pygame.draw.circle(c, (170, 170, 185), tip, 9)
             ghost_marks = []
             for i, (kind, hp) in enumerate(ghosts):
                 x = ghost_x(i, len(ghosts))
@@ -676,6 +707,7 @@ class WindowPolicy(HumanPolicy):
             w.sounds.play("potion")
         elif change > 0:
             w.popup(f"+{change:.0f} Walt heals", COLORS["heal"], 150, 210)
+            w.flashes.start("walt_heal", 0.7)
             w.particles.rise(170, GROUND_Y - 60, COLORS["heal"])
             w.bubble = "You're hurt. Hold still, kid."
             w.sounds.play("heal")
@@ -696,6 +728,12 @@ class WindowPolicy(HumanPolicy):
             return
         hit_any = False
         for i, ((kind, hp), (_, old_hp)) in enumerate(zip(ghosts, before)):
+            damage = old_hp - hp
+            walt_hit = w.help_mode == "fight" and (abs(damage - C.COMPANION_DAMAGE) < 0.01 or
+                                                   abs(damage - C.PLAYER_ATTACK - C.COMPANION_DAMAGE) < 0.01)
+            if walt_hit:                                   # Walt's wrench (6 damage) hit this ghost
+                w.flashes.start("walt_attack", 0.35)
+                w.bubble = WALT_HITS[int(time.time()) % len(WALT_HITS)]
             if hp < old_hp:
                 x = ghost_x(i, len(ghosts))
                 w.popup(f"-{old_hp - hp:.0f}", COLORS["text"], x + 50, 300)
