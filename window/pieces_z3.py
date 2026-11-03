@@ -204,21 +204,19 @@ WAX_FIGURES = [
     {"name": "THE BALLERINA", "body": (250, 190, 210), "hair": (60, 40, 30), "hair_style": "bun", "extra": "tutu"},
     {"name": "BINGO", "body": (230, 200, 60), "legs": (60, 120, 200), "hat": "clown", "clown_face": True,
      "extra": "balloon", "hair_style": "none"},
-    {"name": "STRONGMAN", "body": (200, 60, 60), "legs": (40, 40, 50), "beard": (50, 35, 25), "belt": GOLD,
-     "hair_style": "none"},
 ]
 
 
 def wax_museum(s, cx, ctx, font):
     """A gallery of wax figures on pedestals, each a different character, with velvet ropes. Now and
-    then one of them turns its head."""
+    then one of them turns its head. The last pedestal is empty: 'W. HALE, MECHANIC' (a silent clue)."""
     t = ctx["t"]
     hall = pygame.Rect(cx - 330, GROUND_Y - 290, 660, 290)
     box(s, (70, 30, 40), hall)
     for x in range(hall.x + 20, hall.right, 110):                                         # columns
         box(s, (110, 60, 60), (x, hall.y + 20, 16, hall.height - 20), outline=False)
     small = pygame.font.SysFont(None, 13)
-    count = len(WAX_FIGURES)
+    count = len(WAX_FIGURES) + 1
     for i in range(count):
         x = hall.x + 55 + i * 92
         pedestal = pygame.Rect(x - 34, GROUND_Y - 44, 68, 44)
@@ -226,10 +224,13 @@ def wax_museum(s, cx, ctx, font):
         pygame.draw.rect(s, GOLD, (pedestal.x, pedestal.y - 4, pedestal.width, 6))
         plaque = pygame.Rect(x - 42, GROUND_Y - 30, 84, 14)
         pygame.draw.rect(s, CREAM, plaque)
-        look = WAX_FIGURES[i]
-        turn = 6 if math.sin(t * 0.9 + i * 2.3) > 0.93 else 0                            # a head turns...
-        person(s, x, GROUND_Y - 44, look, t, turn=turn)
-        label = small.render(look["name"], True, OUTLINE)
+        if i < len(WAX_FIGURES):
+            look = WAX_FIGURES[i]
+            turn = 6 if math.sin(t * 0.9 + i * 2.3) > 0.93 else 0                        # a head turns...
+            person(s, x, GROUND_Y - 44, look, t, turn=turn)
+            label = small.render(look["name"], True, OUTLINE)
+        else:                                                                             # the empty pedestal
+            label = small.render("W. HALE, MECH.", True, OUTLINE)
         s.blit(label, label.get_rect(center=plaque.center))
     for i in range(count - 1):                                                            # velvet ropes
         a = hall.x + 55 + i * 92 + 34
@@ -262,8 +263,35 @@ def workshop(s, cx, ctx, font):
             circle(s, METAL, (x + r * math.cos(a), y + r * math.sin(a)), r // 4, outline=False)
         circle(s, METAL, (x, y), r)
         circle(s, (66, 60, 62), (x, y), r // 3)
+    paper = pygame.Rect(room.x + 178, room.y + 26, 128, 92)                               # old newspaper clipping
+    box(s, (225, 215, 185), paper, outline=True)
+    head_font = pygame.font.SysFont(None, 20)
+    small_font = pygame.font.SysFont(None, 14)
+    s.blit(head_font.render("PARK FIRE", True, OUTLINE), (paper.x + 8, paper.y + 6))
+    s.blit(small_font.render("MECHANIC MISSING", True, OUTLINE), (paper.x + 8, paper.y + 24))
+    s.blit(small_font.render("June 1987", True, (90, 80, 70)), (paper.x + 8, paper.y + 36))
+    pygame.draw.rect(s, (120, 110, 100), (paper.x + 76, paper.y + 26, 42, 34))           # grainy photo
+    pygame.draw.circle(s, (200, 190, 170), (paper.x + 97, paper.y + 40), 8)
+    pygame.draw.rect(s, (95, 85, 70), (paper.x + 88, paper.y + 30, 18, 5))               # the cap again
+    for i in range(4):                                                                    # lines of text
+        pygame.draw.line(s, (150, 140, 120), (paper.x + 8, paper.y + 52 + i * 9), (paper.x + 68, paper.y + 52 + i * 9), 2)
+    pygame.draw.circle(s, (220, 40, 40), (paper.centerx, paper.y + 3), 4)
+    calendar = pygame.Rect(room.right - 142, room.y + 160, 56, 46)                        # calendar stuck in 1987
+    box(s, CREAM, calendar)
+    pygame.draw.rect(s, (190, 50, 60), (calendar.x, calendar.y, calendar.width, 12))
+    s.blit(small_font.render("JUN 1987", True, OUTLINE), (calendar.x + 5, calendar.y + 18))
+    for i in range(3):
+        pygame.draw.line(s, (180, 170, 150), (calendar.x + 5, calendar.y + 32 + i * 4), (calendar.right - 5, calendar.y + 32 + i * 4), 1)
+    locker = pygame.Rect(room.right - 78, GROUND_Y - 180, 56, 180)                       # Walt's locker, door open
+    box(s, (90, 100, 110), locker)
+    pygame.draw.rect(s, (30, 30, 36), locker.inflate(-10, -10))
+    pygame.draw.rect(s, (95, 85, 70), (locker.x + 12, locker.y + 26, 32, 10), border_radius=3)  # his cap inside
+    pygame.draw.rect(s, (150, 138, 115), (locker.x + 10, locker.y + 46, 36, 70), border_radius=4)  # his coat
+    plate = pygame.Rect(locker.x + 4, locker.y - 18, locker.width - 8, 14)
+    pygame.draw.rect(s, GOLD, plate)
+    s.blit(small_font.render("W. HALE", True, OUTLINE), (plate.x + 6, plate.y + 2))
     for i in range(3):                                                                    # hanging chains
-        x = room.x + 200 + i * 40
+        x = room.x + 320 + i * 20
         for k in range(6):
             pygame.draw.ellipse(s, METAL, (x - 4 + int(3 * math.sin(t + i)), room.y + k * 14, 8, 14), 2)
     bench = pygame.Rect(room.x + 40, GROUND_Y - 90, 300, 16)                              # workbench with parts
@@ -276,9 +304,16 @@ def workshop(s, cx, ctx, font):
     eye_on = math.sin(t * 4) > 0
     circle(s, (255, 60, 60) if eye_on else (90, 20, 20), (bench.x + 48, bench.y - 30), 5, outline=False)
     circle(s, (255, 60, 60) if eye_on else (90, 20, 20), (bench.x + 72, bench.y - 30), 5, outline=False)
-    pygame.draw.line(s, METAL, (bench.x + 120, bench.y - 6), (bench.x + 170, bench.y - 30), 6)   # a loose arm
-    circle(s, METAL, (bench.x + 170, bench.y - 30), 8)
-    spark_x, spark_y = bench.x + 220, bench.y - 8                                          # welding sparks
+    radio = (bench.x + 130, bench.y)                                                     # a melted radio (silent clue)
+    poly(s, (60, 55, 50), [(radio[0] - 26, radio[1]), (radio[0] - 22, radio[1] - 26), (radio[0] - 8, radio[1] - 34),
+                           (radio[0] + 18, radio[1] - 28), (radio[0] + 26, radio[1] - 8), (radio[0] + 30, radio[1])])
+    for dx, length in ((-14, 10), (4, 16), (20, 8)):                                      # drips of melted plastic
+        pygame.draw.line(s, (60, 55, 50), (radio[0] + dx, radio[1]), (radio[0] + dx, radio[1] + length), 5)
+    pygame.draw.circle(s, (40, 36, 32), (radio[0] - 4, radio[1] - 16), 7)                # warped speaker
+    pygame.draw.line(s, METAL, (radio[0] + 12, radio[1] - 30), (radio[0] + 30, radio[1] - 54), 2)   # bent antenna
+    pygame.draw.line(s, METAL, (bench.x + 190, bench.y - 6), (bench.x + 235, bench.y - 28), 6)   # a loose arm
+    circle(s, METAL, (bench.x + 235, bench.y - 28), 8)
+    spark_x, spark_y = bench.x + 270, bench.y - 8                                          # welding sparks
     rng = random.Random(int(t * 12))
     for _ in range(10):
         a = rng.uniform(math.pi, 2 * math.pi)

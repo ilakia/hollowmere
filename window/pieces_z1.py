@@ -117,42 +117,94 @@ def cotton_candy(s, cx, ctx, font):
     pygame.draw.arc(s, (200, 30, 50), (mx - 16 + tilt, GROUND_Y - 152, 32, 22), math.pi, 2 * math.pi, 4)
 
 
+SKIN_TONES = [(240, 205, 175), (220, 180, 140), (190, 140, 100), (140, 95, 65), (250, 220, 200)]
+HAIR_COLOURS = [(60, 40, 30), (30, 25, 25), (200, 160, 80), (150, 70, 40), (210, 210, 215), (90, 60, 40)]
+SHIRTS = [(200, 70, 80), (70, 120, 200), (90, 170, 110), (230, 190, 80), (150, 90, 170), (240, 240, 240)]
+
+
+def portrait(s, rect, seed, size=1.0):
+    """A tiny photo of a person: head, hair, eyes, smile and shoulders (seed picks the look)."""
+    rect = pygame.Rect(rect)
+    r = int(min(rect.width, rect.height) * 0.22 * size)
+    cx, cy = rect.centerx, rect.centery - r // 3
+    skin = SKIN_TONES[seed % len(SKIN_TONES)]
+    hair = HAIR_COLOURS[(seed * 3) % len(HAIR_COLOURS)]
+    shirt = SHIRTS[(seed * 5) % len(SHIRTS)]
+    pygame.draw.ellipse(s, shirt, (cx - r * 1.6, cy + r * 0.8, r * 3.2, r * 2.2))         # shoulders
+    if seed % 3 == 0:                                                                     # long hair behind the head
+        pygame.draw.rect(s, hair, (cx - r * 1.1, cy - r * 0.3, r * 2.2, r * 1.6), border_radius=r)
+    pygame.draw.circle(s, skin, (cx, cy), r)
+    pygame.draw.ellipse(s, hair, (cx - r * 1.05, cy - r * 1.15, r * 2.1, r * 1.1))       # hair on top
+    eye = max(1, r // 4)
+    pygame.draw.circle(s, OUTLINE, (cx - r * 0.4, cy), eye)
+    pygame.draw.circle(s, OUTLINE, (cx + r * 0.4, cy), eye)
+    pygame.draw.arc(s, (150, 40, 50), (cx - r * 0.5, cy + r * 0.1, r, r * 0.6), math.pi, 2 * math.pi, max(1, r // 4))
+
+
+def photo_strip(s, x, y, seed):
+    """A photo-booth strip: four frames of the same visitors pulling faces."""
+    strip = pygame.Rect(x, y, 40, 150)
+    pygame.draw.rect(s, CREAM, strip)
+    pygame.draw.rect(s, OUTLINE, strip, 1)
+    for f in range(4):
+        frame = pygame.Rect(x + 4, y + 4 + f * 36, 32, 32)
+        pygame.draw.rect(s, (205, 200, 190), frame)
+        if seed % 2 == 0:                                                                 # a couple
+            portrait(s, frame.move(-7, 2), seed + f, 0.8)
+            portrait(s, frame.move(7, 2), seed + 2, 0.8)
+        else:                                                                             # one visitor
+            portrait(s, frame, seed + f % 2)
+    pygame.draw.circle(s, (220, 40, 40), (x + 20, y + 2), 4)                             # pin
+
+
 def photo_booth(s, cx, ctx, font):
-    """Vintage photo booth with a flash, and a corkboard of old photo strips from happy visitors."""
+    """Vintage photo booth with a flash, and a big corkboard "memory wall" of visitors' photo strips.
+    In the middle hangs the 1987 staff photo; the man on the right with the cap, grey beard and tan coat
+    looks exactly like Walt (a silent clue)."""
     t = ctx["t"]
-    box(s, (55, 45, 85), (cx - 80, GROUND_Y - 235, 160, 235), radius=8)
-    marquee(s, "PHOTOS 4 FOR 10c", (cx, GROUND_Y - 250), font, color=(255, 230, 150), back=(40, 30, 60), t=t)
-    curtain = pygame.Rect(cx - 58, GROUND_Y - 190, 116, 190)
+    bx = cx - 210                                                                         # the booth, on the left
+    box(s, (55, 45, 85), (bx - 80, GROUND_Y - 235, 160, 235), radius=8)
+    marquee(s, "PHOTOS 4 FOR 10c", (bx, GROUND_Y - 250), font, color=(255, 230, 150), back=(40, 30, 60), t=t)
+    curtain = pygame.Rect(bx - 58, GROUND_Y - 190, 116, 190)
     pygame.draw.rect(s, (160, 30, 45), curtain)
     for i in range(6):
         pygame.draw.line(s, (120, 20, 32), (curtain.x + 10 + i * 19, curtain.y), (curtain.x + 10 + i * 19, curtain.bottom), 3)
     pygame.draw.rect(s, GOLD, (curtain.x - 4, curtain.y - 6, curtain.width + 8, 8))
     if (t % 3.2) < 0.12:                                                                  # the flash goes off
         pygame.draw.rect(s, (255, 255, 235), curtain)
-    box(s, (60, 60, 70), (cx + 60, GROUND_Y - 120, 18, 30))                               # coin slot
-    pygame.draw.rect(s, OUTLINE, (cx + 66, GROUND_Y - 112, 6, 14))
-    board = pygame.Rect(cx + 110, GROUND_Y - 220, 170, 150)                               # corkboard
-    box(s, (170, 120, 70), board, radius=4)
-    for i in range(5):
-        x = board.x + 12 + i * 32
-        y = board.y + 10 + (i % 2) * 14
-        pygame.draw.rect(s, CREAM, (x, y, 24, 92))
-        for f in range(4):
-            pygame.draw.rect(s, (80, 70, 70), (x + 3, y + 4 + f * 22, 18, 18))
-            circle(s, (205, 190, 170), (x + 12, y + 12 + f * 22), 4, outline=False)
-        pygame.draw.circle(s, (220, 40, 40), (x + 12, y + 2), 3)                         # pin
-    family_photo = pygame.Rect(board.x + 40, board.bottom - 40, 60, 34)                   # a family snapshot
-    pygame.draw.rect(s, CREAM, family_photo)
-    for i, size in enumerate((6, 6, 4, 4)):                                              # two adults, two kids
-        circle(s, (205, 190, 170), (family_photo.x + 10 + i * 13, family_photo.y + 12 + (6 - size)), size, outline=False)
-    small = pygame.font.SysFont(None, 14).render("SMILE!", True, OUTLINE)
-    s.blit(small, (family_photo.x + 14, family_photo.bottom - 10))
-    for i in range(3):                                                                    # strips on the left too
-        x = cx - 150 - i * 34
-        pygame.draw.line(s, METAL, (x - 16, GROUND_Y - 214), (x + 18, GROUND_Y - 214), 1)
-        pygame.draw.rect(s, CREAM, (x - 12, GROUND_Y - 210, 24, 90))
-        for f in range(4):
-            pygame.draw.rect(s, (80, 70, 70), (x - 9, GROUND_Y - 206 + f * 21, 18, 17))
+    box(s, (60, 60, 70), (bx + 60, GROUND_Y - 120, 18, 30))                               # coin slot
+    pygame.draw.rect(s, OUTLINE, (bx + 66, GROUND_Y - 112, 6, 14))
+    board = pygame.Rect(cx - 90, GROUND_Y - 262, 380, 200)                               # the memory wall
+    box(s, (170, 120, 70), board, radius=6)
+    pygame.draw.rect(s, WOOD, board, 8, border_radius=6)
+    title = font.render("MEMORIES OF HOLLOWMERE", True, CREAM)
+    s.blit(title, title.get_rect(midtop=(board.centerx, board.y + 10)))
+    for i, x in enumerate((board.x + 16, board.x + 62, board.right - 102, board.right - 56)):
+        photo_strip(s, x, board.y + 36 + (i % 2) * 8, seed=i * 7 + 3)
+    staff = pygame.Rect(board.centerx - 72, board.y + 40, 144, 104)                       # the 1987 staff photo
+    pygame.draw.rect(s, CREAM, staff)
+    pygame.draw.rect(s, OUTLINE, staff, 1)
+    inner = staff.inflate(-10, -26).move(0, -6)
+    pygame.draw.rect(s, (150, 175, 200), inner)                                           # sky behind them
+    pygame.draw.rect(s, (110, 100, 90), (inner.x, inner.bottom - 18, inner.width, 18))   # ground
+    for i in range(3):                                                                    # three staff in red jackets
+        x = inner.x + 18 + i * 28
+        pygame.draw.rect(s, (190, 50, 60), (x - 9, inner.bottom - 30, 18, 30), border_radius=4)
+        pygame.draw.circle(s, SKIN_TONES[(i * 2) % 5], (x, inner.bottom - 38), 8)
+        pygame.draw.ellipse(s, HAIR_COLOURS[i], (x - 8, inner.bottom - 48, 16, 9))
+        pygame.draw.circle(s, OUTLINE, (x - 3, inner.bottom - 39), 1)
+        pygame.draw.circle(s, OUTLINE, (x + 3, inner.bottom - 39), 1)
+    wx = inner.right - 20                                                                 # ... and Walt
+    pygame.draw.rect(s, (150, 138, 115), (wx - 10, inner.bottom - 32, 20, 32), border_radius=4)   # tan coat
+    pygame.draw.circle(s, (232, 200, 168), (wx, inner.bottom - 41), 9)
+    pygame.draw.rect(s, (95, 85, 70), (wx - 10, inner.bottom - 54, 20, 7))               # his cap
+    pygame.draw.polygon(s, (200, 200, 205), [(wx - 7, inner.bottom - 38), (wx + 7, inner.bottom - 38),
+                                             (wx, inner.bottom - 28)])                     # grey beard
+    pygame.draw.circle(s, OUTLINE, (wx - 3, inner.bottom - 43), 1)
+    pygame.draw.circle(s, OUTLINE, (wx + 3, inner.bottom - 43), 1)
+    caption = pygame.font.SysFont(None, 16).render("HOLLOWMERE STAFF  ·  1987", True, OUTLINE)
+    s.blit(caption, caption.get_rect(midbottom=(staff.centerx, staff.bottom - 3)))
+    pygame.draw.circle(s, (220, 40, 40), (staff.centerx, staff.y + 3), 4)                # pin
 
 
 def ring_toss(s, cx, ctx, font):

@@ -9,8 +9,8 @@ from .pieces_kit import (CREAM, GOLD, GROUND_Y, METAL, OUTLINE, WOOD, awning, bo
 
 
 def hall_of_mirrors(s, cx, ctx, font):
-    """Ornate gold-framed mirrors of different shapes (tall, wavy, round) with warped live reflections
-    of the player and Walt."""
+    """Ornate gold-framed mirrors of different shapes (tall, wavy, round) with warped live reflections.
+    Only the player is reflected, never Walt (a silent clue; Walt explains it in the finale flashback)."""
     t = ctx["t"]
     hall = pygame.Rect(cx - 300, GROUND_Y - 280, 600, 280)
     box(s, (40, 46, 80), hall)
@@ -32,9 +32,7 @@ def hall_of_mirrors(s, cx, ctx, font):
             stretch = 0.7
         else:
             stretch = 1.25
-        reflected = [("player", ctx["player_x"])]
-        if ctx["show_walt"]:
-            reflected.append(("walt", ctx["walt_x"]))
+        reflected = [("player", ctx["player_x"])]                                       # Walt has no reflection
         middle = sum(x for _, x in reflected) / len(reflected)
         for name, x in reflected:
             image = ctx["sprites"][name][0]

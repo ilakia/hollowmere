@@ -25,7 +25,6 @@ import os
 import random
 import sys
 import time
-import uuid
 from pathlib import Path
 
 import pandas as pd
@@ -71,6 +70,23 @@ INTRO_LINE = "Name's Walt. Stick with me, I know the way out."
 GATE_LINE = "The gate is just ahead. Nearly out, kid."
 REVEAL_LINE = "I never left this park, kid. Neither will you."
 FAREWELL_LINE = "Not bad, kid. Not bad at all. Go on. Don't look back."
+# Finale: ghost-Walt speaks in bubbles (and in his slow ghost voice)
+FINALE_START_LINE = "Now you know, kid. Let's finish this."
+FINALE_CHARGE_LINE = "Here comes the light!"
+FINALE_HURT_LINE = "You're stronger than you look, kid."
+# Flashback after the reveal: Walt shows the clues the player walked past (only rooms they visited)
+FLASHBACK_INTRO = "Didn't you notice, kid? Let me show you what you walked past."
+FLASHBACK_NONE = "So many signs in this park, and you walked right past every one of them."
+FLASHBACK_LINES = {
+    "z1_photo_booth": "The memory wall at the photo booth. That's me in the staff photo. 1987. Same face as tonight.",
+    "z2_mirrors": "The Hall of Mirrors. A hundred of you in there, and not one of me. I have no reflection.",
+    "z3_wax_museum": "The wax museum kept a place for me. W. Hale, Mechanic. Empty, because I never left.",
+    "z3_workshop": "My workshop. The newspaper, my locker, the calendar: the fire of June 1987. That night I died.",
+}
+# where each clue sits in its scene when the scene is drawn at x = MEMORY_X (for the glowing ring)
+MEMORY_X = 560
+CLUE_SPOTS = {"z1_photo_booth": (MEMORY_X + 100, GROUND_Y - 170, 85), "z2_mirrors": (MEMORY_X + 2, GROUND_Y - 145, 70),
+              "z3_wax_museum": (MEMORY_X + 277, GROUND_Y - 100, 60), "z3_workshop": (MEMORY_X - 20, GROUND_Y - 200, 80)}
 DEFEND_LINE = "It's glowing, DEFEND!"
 HEAL_LINE = "You're hurt. Hold still, kid."
 REST_OFFER_LINE = "You're fading, kid. Take a rest, I've got this."
@@ -197,7 +213,11 @@ class GameWindow:
         spoken = ([INTRO_LINE, DEFEND_LINE, HEAL_LINE, REST_OFFER_LINE, REST_LINE, GATE_LINE] +   # most needed first
                   list(WALT_BUBBLE.values()) + WALT_HITS + TRAVEL_LINES)
         self.voice_index = 0             # which of VOICE_OPTIONS Walt speaks with (chosen on the title screen)
-        self.voice = WaltVoice(spoken, [REVEAL_LINE, FAREWELL_LINE], enabled=sound_on and demo_dir is None)
+        self.player_id = ""              # typed on the title screen (a nickname or code)
+        self.save_path = "data/window_runs.csv"
+        ghost_spoken = ([REVEAL_LINE, FLASHBACK_INTRO, FLASHBACK_NONE] + list(FLASHBACK_LINES.values()) +
+                        [FINALE_START_LINE, FINALE_CHARGE_LINE, FINALE_HURT_LINE, FAREWELL_LINE])
+        self.voice = WaltVoice(spoken, ghost_spoken, enabled=sound_on and demo_dir is None)
         self.director_name = director_name
         self.room_label = ""
         self.help_mode = None
@@ -430,6 +450,41 @@ class GameWindow:
         return self.wait_for(draw_scene, buttons)
 
 
+def ask_player_id(w, current):
+    """Let the player type an ID (letters, digits, - and _; up to 12). Enter confirms, Esc cancels.
+    A nickname or code is asked for, not a real name, so the saved data stays anonymous."""
+    text = current
+    frozen = w.screen.copy()
+    shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    shade.fill((0, 0, 0, 180))
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                close_game()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_RETURN:
+                    return text
+                if event.key == pygame.K_ESCAPE:
+                    return current
+                if event.key == pygame.K_BACKSPACE:
+                    text = text[:-1]
+                elif event.unicode and (event.unicode.isalnum() or event.unicode in "-_") and len(text) < 12:
+                    text += event.unicode.upper()
+        w.screen.blit(frozen, (0, 0))
+        w.screen.blit(shade, (0, 0))
+        draw_text(w.screen, "Who is playing?", w.font_big, COLORS["text"], WIDTH // 2, 170, center=True)
+        draw_text(w.screen, "Type a player ID (a nickname or code like P01, not your real name)",
+                  w.font, COLORS["dim_text"], WIDTH // 2, 215, center=True)
+        field = pygame.Rect(WIDTH // 2 - 160, 250, 320, 56)
+        pygame.draw.rect(w.screen, COLORS["panel"], field, border_radius=8)
+        pygame.draw.rect(w.screen, COLORS["glow"], field, 2, border_radius=8)
+        cursor = "_" if int(time.time() * 2) % 2 == 0 else " "
+        draw_text(w.screen, text + cursor, w.font_big, COLORS["charge"], field.centerx, field.centery, center=True)
+        draw_text(w.screen, "Enter = OK    Esc = cancel", w.font_small, COLORS["dim_text"], WIDTH // 2, 330, center=True)
+        pygame.display.flip()
+        w.clock.tick(FPS)
+
+
 # ---------------------------------------------------------------- title menu
 def title_menu(w, director):
     """Title screen. The player can pick the director and switch sound. Output: chosen director."""
@@ -452,23 +507,35 @@ def title_menu(w, director):
                   w.font, COLORS["dim_text"], WIDTH // 2, 175, center=True)
         draw_text(w.canvas, "A attack (stop the timing bar with Space)   ·   D defend when a ghost glows   ·   "
                   "P potion   ·   M mute", w.font_small, COLORS["dim_text"], WIDTH // 2, 365, center=True)
+        if w.player_id:
+            games, knows = player_history(w.player_id, w.save_path)
+            if games:
+                secret = "  ·  you already know Walt's secret" if knows else ""
+                draw_text(w.canvas, f"Welcome back, {w.player_id}: this will be game {games + 1}{secret}",
+                          w.font_small, COLORS["flashlight"], WIDTH // 2, 385, center=True)
 
     while True:
         sound = "off" if w.sounds.muted else "on"
         voice_name = VOICE_OPTIONS[w.voice_index][0]
+        player_label = w.player_id or "enter ID"
         buttons = [Button("start", "Start  [Space]", (90, 410, 200, 50), [pygame.K_SPACE, pygame.K_RETURN]),
+                   Button("player", f"Player: {player_label}  [I]", (240, 470, 240, 40), [pygame.K_i]),
                    Button("director", f"Director: {WINDOW_DIRECTORS[index]}  < >", (305, 410, 240, 50),
                           [pygame.K_LEFT, pygame.K_RIGHT]),
                    Button("voice", f"Walt's voice: {voice_name}  [V]", (560, 410, 230, 50), [pygame.K_v]),
                    Button("sound", f"Sound: {sound} [S]", (805, 410, 140, 50), [pygame.K_s]),
-                   Button("quit", "Quit  [Esc]", (370, 470, 220, 40), [pygame.K_ESCAPE])]
+                   Button("quit", "Quit  [Esc]", (500, 470, 220, 40), [pygame.K_ESCAPE])]
         choice = w.wait_for(draw_scene, buttons)
         if choice == "voice":                     # next voice, and Walt says hello in it straight away
             w.voice_index = (w.voice_index + 1) % len(VOICE_OPTIONS)
             voice = VOICE_OPTIONS[w.voice_index][1]
             w.voice.set_voice(voice)
             w.voice.preview(voice, INTRO_LINE)
+        if choice == "player":
+            w.player_id = ask_player_id(w, w.player_id)
         if choice == "start":
+            if not w.player_id and w.demo_dir is None:
+                w.player_id = ask_player_id(w, w.player_id) or "GUEST"
             return WINDOW_DIRECTORS[index]
         if choice == "director":
             index = (index + 1) % len(WINDOW_DIRECTORS)
@@ -513,7 +580,12 @@ class WindowNarrator:
             self.zone_titles = []
             w.scenery.world_x = 0.0
         self.walk_and_meet(state, beat)
-        w.bubble = WALT_BUBBLE.get(w.help_mode, "")
+        if state["is_finale"]:
+            self.flashback()
+            w.bubble = ""
+            w.speak(FINALE_START_LINE, ghost=True)
+        else:
+            w.bubble = WALT_BUBBLE.get(w.help_mode, "")
         return decision
 
     def zone_card(self, state, beat):
@@ -528,6 +600,62 @@ class WindowNarrator:
             draw_park_map(surface, rect, self.story.beats, self.visited, beat["id"], w.font_small)
 
         w.card(C.ZONE_NAMES[state["zone"]], paragraphs, side=park_map, button_label="Walk on  [Space]")
+
+    def flashback(self):
+        """After the reveal, Walt shows the clue rooms the player actually visited, as sepia memories
+        with the clue circled. If the player saw none of them, Walt says so."""
+        clue_rooms = [b for b in self.visited if b in FLASHBACK_LINES]
+        scenes = [(None, FLASHBACK_INTRO)] + [(b, FLASHBACK_LINES[b]) for b in clue_rooms]
+        if not clue_rooms:
+            scenes.append((None, FLASHBACK_NONE))
+        for beat_id, line in scenes:
+            self.memory_scene(beat_id, line)
+
+    def memory_scene(self, beat_id, line):
+        """One flashback picture (about 6 s, Space to go on): the remembered room in sepia, with Walt
+        still looking human in it, a glowing ring around the clue, and ghost-Walt's words."""
+        w = self.window
+        w.voice.speak(line, ghost=True, muted=w.sounds.muted)
+        zone = self.story.by_id[beat_id]["zone"] if beat_id else 4
+        saved_world, saved_beat = w.scenery.world_x, w.set_beat
+        elapsed, frame = 0.0, 0
+        while elapsed < 6.5:
+            dt = w.tick()
+            elapsed += dt
+            if w.demo_dir is None and elapsed > 1.0 and pygame.key.get_pressed()[pygame.K_SPACE]:
+                break
+            c = w.canvas
+            w.scenery.world_x = 0.0
+            w.scenery.draw_back(c, zone)
+            if beat_id:
+                w.set_beat, w.set_target = beat_id, (MEMORY_X - 640) / 0.8           # the piece at MEMORY_X
+                w.draw_piece(170, 300, False)
+                w.draw_sprite("player", 170, GROUND_Y)
+                w.draw_sprite("walt", 300, GROUND_Y)                                     # Walt as he seemed then
+                w.scenery.draw_front(c, zone, [(380, GROUND_Y - 70, 150, COLORS["flashlight"])])
+                old = pygame.transform.grayscale(c)                                      # turn it into an old memory
+                old.fill((255, 222, 170), special_flags=pygame.BLEND_MULT)
+                c.blit(old, (0, 0))
+                x, y, r = CLUE_SPOTS[beat_id]
+                pulse = int(6 * math.sin(time.time() * 5))
+                pygame.draw.circle(c, (255, 230, 150), (x, y), r + pulse, 4)              # the clue, circled
+                for _ in range(120):                                                     # film grain
+                    gx, gy = random.randrange(WIDTH), random.randrange(HEIGHT)
+                    c.set_at((gx, gy), (60, 50, 40))
+                draw_text(c, "MEMORY", w.font_big, (255, 235, 200), 30, 60)
+            else:
+                draw_big_gate(c, 560, 0.0, w.font)
+                w.draw_sprite("player", 170, GROUND_Y)
+                w.draw_sprite("walt_ghost", 730, GROUND_Y, flip=True)
+                w.scenery.draw_front(c, zone, [(730, GROUND_Y - 60, 200, (120, 255, 190))], finale=True)
+            for y in (0, HEIGHT - 50):                                                    # cinema bars
+                pygame.draw.rect(c, (0, 0, 0), (0, y, WIDTH, 50))
+            draw_bubble(c, w.font_small, line, 250 if beat_id else 730, 190)       # memories: left, clue stays visible
+            if elapsed > 1.0:
+                draw_text(c, "Space", w.font_small, COLORS["dim_text"], WIDTH - 60, HEIGHT - 30, center=True)
+            w.present(capture=frame % 12 == 0)
+            frame += 1
+        w.scenery.world_x, w.set_beat = saved_world, saved_beat
 
     def walk_and_meet(self, state, beat):
         """Walk to the attraction (hold RIGHT), then the ghosts fade in and the fight starts."""
@@ -683,6 +811,7 @@ class WindowPolicy(HumanPolicy):
         self.room_timing = []
         self.rest_used = False          # the rest can be used once per attempt at a room
         self.rest_offered = False
+        self.hurt_said = False          # ghost-Walt's "you're stronger than you look" only once
 
     def can_rest(self, view):
         """Rest is offered when Walt is helping (hint, heal or fight, not in the finale), the player is
@@ -708,6 +837,14 @@ class WindowPolicy(HumanPolicy):
         if charging and not self.previous_wind_up:
             w.sounds.play("charge")
         self.previous_wind_up = charging
+        if w.is_finale:                                   # ghost-Walt talks during the last fight
+            walt_hp = ghosts[0][1] if ghosts else 0
+            walt_full = C.ENEMY_TYPES["walt"]["hp"] * C.DIFFICULTY[w.difficulty]["hp_mult"]
+            if charging:
+                w.speak(FINALE_CHARGE_LINE, ghost=True)
+            elif walt_hp < 0.5 * walt_full and w.bubble != FINALE_HURT_LINE and not self.hurt_said:
+                w.speak(FINALE_HURT_LINE, ghost=True)
+                self.hurt_said = True
         if charging and view["warning"]:
             w.speak(DEFEND_LINE)
         elif w.bubble == DEFEND_LINE:      # the glow is over: back to his normal line
@@ -785,9 +922,12 @@ class WindowPolicy(HumanPolicy):
                 draw_text(c, f"Walt: {w.help_mode}", w.font_small, COLORS["dim_text"], 262, GROUND_Y + 12)
                 if w.bubble:
                     draw_bubble(c, w.font_small, w.bubble, 300, 245)
+            elif w.bubble:                                                    # ghost-Walt speaks over himself
+                draw_bubble(c, w.font_small, w.bubble, ghost_x(0, max(1, len(ghosts))), 250)
             for kind, hp, x, glowing in ghost_marks:
-                if glowing:
-                    draw_text(c, "!", w.font_mark, COLORS["charge"], x, GROUND_Y - 175, center=True)
+                if glowing:                       # in the finale the "!" sits left of Walt's speech bubble
+                    mark_x = x - 110 if w.is_finale else x
+                    draw_text(c, "!", w.font_mark, COLORS["charge"], mark_x, GROUND_Y - 175, center=True)
                 full_hp = C.ENEMY_TYPES[kind]["hp"] * hp_mult
                 draw_bar(c, x - 40, GROUND_Y + 12, 80, 10, hp / full_hp)
                 draw_text(c, kind, w.font_small, COLORS["dim_text"], x, GROUND_Y + 34, center=True)
@@ -1033,6 +1173,19 @@ def ending_scene(w, outcome):
         frame += 1
 
 
+def player_history(player_id, out):
+    """How many games this player ID already saved, and whether they ever reached the finale (then they
+    know Walt's secret, which may change how they play). Output: (games_before, knew_twist)."""
+    out = Path(out)
+    if not player_id or not out.exists():
+        return 0, False
+    table = pd.read_csv(out)
+    if "player_id" not in table.columns:
+        return 0, False
+    mine = table[table["player_id"].astype(str) == player_id]
+    return mine["run_id"].nunique(), bool(mine["is_finale"].any())
+
+
 def save_game(rows, out):
     """Add one finished game to the CSV. The old file is read and joined with the new rows, so the
     columns always line up, even if a newer version of the game saves an extra column."""
@@ -1077,8 +1230,8 @@ def main():
         os.environ["SDL_AUDIODRIVER"] = "dummy"       # demo runs silently
 
     story = Story()
-    player_id = uuid.uuid4().hex[:6]       # anonymous, not linked to any name (same for all games this session)
     window = GameWindow(args.controller, demo_dir=args.demo, sound_on=not args.no_sound)
+    window.save_path = args.out
     window.sounds.start_music()
     while True:
         try:
@@ -1087,9 +1240,13 @@ def main():
             continue
         outcome = rows[-1]["run_outcome"]
         if args.demo is None:              # save first, so quitting on the end screen keeps the game
+            player_id = window.player_id or "GUEST"
+            games_before, knew_twist = player_history(player_id, args.out)
             for r in rows:
                 r.update({"run_id": f"window-{player_id}-{seed}", "controller": director,
-                          "bot_type": "human", "player_id": player_id})
+                          "bot_type": "human", "player_id": player_id,
+                          "game_number": games_before + 1,      # 1 = first game of this player
+                          "knew_twist": knew_twist})            # True = they had already seen Walt's reveal
             save_game(rows, args.out)
             print(f"Game saved to {args.out}")
         window.sounds.play("win" if outcome == "escaped" else "death")

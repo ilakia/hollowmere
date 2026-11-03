@@ -302,6 +302,7 @@ def draw_bubble(surface, font, text, x, y):
     lines = wrap_text(text, font, 250)
     height = 12 + 22 * len(lines)
     box = pygame.Rect(x - 40, y - height - 16, 270, height)
+    box.x = max(8, min(box.x, WIDTH - box.width - 8))                  # always fully on screen
     pygame.draw.rect(surface, COLORS["text"], box, border_radius=10)
     pygame.draw.polygon(surface, COLORS["text"], [(x - 10, box.bottom), (x + 10, box.bottom), (x, y)])
     for i, line in enumerate(lines):
