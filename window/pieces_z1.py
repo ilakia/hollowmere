@@ -118,7 +118,7 @@ def cotton_candy(s, cx, ctx, font):
 
 
 def photo_booth(s, cx, ctx, font):
-    """Vintage photo booth with a flash, and a corkboard of old photo strips. One shows Walt in 1987."""
+    """Vintage photo booth with a flash, and a corkboard of old photo strips from happy visitors."""
     t = ctx["t"]
     box(s, (55, 45, 85), (cx - 80, GROUND_Y - 235, 160, 235), radius=8)
     marquee(s, "PHOTOS 4 FOR 10c", (cx, GROUND_Y - 250), font, color=(255, 230, 150), back=(40, 30, 60), t=t)
@@ -141,13 +141,12 @@ def photo_booth(s, cx, ctx, font):
             pygame.draw.rect(s, (80, 70, 70), (x + 3, y + 4 + f * 22, 18, 18))
             circle(s, (205, 190, 170), (x + 12, y + 12 + f * 22), 4, outline=False)
         pygame.draw.circle(s, (220, 40, 40), (x + 12, y + 2), 3)                         # pin
-    walt_photo = pygame.Rect(board.x + 40, board.bottom - 40, 60, 34)                     # "STAFF 1987"
-    pygame.draw.rect(s, CREAM, walt_photo)
-    for i in range(4):
-        circle(s, (205, 190, 170), (walt_photo.x + 9 + i * 14, walt_photo.y + 14), 5, outline=False)
-    pygame.draw.rect(s, (95, 85, 70), (walt_photo.x + 47, walt_photo.y + 3, 12, 5))      # Walt's cap
-    small = pygame.font.SysFont(None, 14).render("STAFF 1987", True, OUTLINE)
-    s.blit(small, (walt_photo.x + 4, walt_photo.bottom - 10))
+    family_photo = pygame.Rect(board.x + 40, board.bottom - 40, 60, 34)                   # a family snapshot
+    pygame.draw.rect(s, CREAM, family_photo)
+    for i, size in enumerate((6, 6, 4, 4)):                                              # two adults, two kids
+        circle(s, (205, 190, 170), (family_photo.x + 10 + i * 13, family_photo.y + 12 + (6 - size)), size, outline=False)
+    small = pygame.font.SysFont(None, 14).render("SMILE!", True, OUTLINE)
+    s.blit(small, (family_photo.x + 14, family_photo.bottom - 10))
     for i in range(3):                                                                    # strips on the left too
         x = cx - 150 - i * 34
         pygame.draw.line(s, METAL, (x - 16, GROUND_Y - 214), (x + 18, GROUND_Y - 214), 1)

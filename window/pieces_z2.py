@@ -9,8 +9,8 @@ from .pieces_kit import (CREAM, GOLD, GROUND_Y, METAL, OUTLINE, WOOD, awning, bo
 
 
 def hall_of_mirrors(s, cx, ctx, font):
-    """Ornate gold-framed mirrors of different shapes (tall, wavy, round). They reflect only the
-    player: the story says "A hundred of you. No Walt in any mirror."."""
+    """Ornate gold-framed mirrors of different shapes (tall, wavy, round) with warped live reflections
+    of the player and Walt."""
     t = ctx["t"]
     hall = pygame.Rect(cx - 300, GROUND_Y - 280, 600, 280)
     box(s, (40, 46, 80), hall)
@@ -26,19 +26,25 @@ def hall_of_mirrors(s, cx, ctx, font):
         pane = pygame.Surface(glass.size, pygame.SRCALPHA)
         pane.fill((70, 100, 135, 255))
         pygame.draw.rect(pane, (95, 130, 165, 255), (0, 0, glass.width, glass.height // 3))  # sky in the glass
-        image = ctx["sprites"]["player"][0]
         if shape == "wavy":                                                               # funhouse warp
             stretch = 1.0 + 0.4 * math.sin(t * 1.4 + i)
         elif shape == "round":
             stretch = 0.7
         else:
             stretch = 1.25
-        width = int(image.get_width() * (2.1 - stretch) * 0.85)
-        warped = pygame.transform.scale(image, (max(8, width), int(image.get_height() * stretch * 0.75)))
-        warped = pygame.transform.flip(warped, True, False)
-        warped.set_alpha(225)
-        mirror_x = glass.width // 2 + (ctx["player_x"] - 480) // 8
-        pane.blit(warped, (mirror_x - warped.get_width() // 2, glass.height - warped.get_height() - 4))
+        reflected = [("player", ctx["player_x"])]
+        if ctx["show_walt"]:
+            reflected.append(("walt", ctx["walt_x"]))
+        middle = sum(x for _, x in reflected) / len(reflected)
+        for name, x in reflected:
+            image = ctx["sprites"][name][0]
+            width = int(image.get_width() * (2.1 - stretch) * 0.7)
+            warped = pygame.transform.scale(image, (max(8, width), int(image.get_height() * stretch * 0.7)))
+            warped = pygame.transform.flip(warped, True, False)
+            warped.set_alpha(225)
+            # side by side like in reality, and the pair moves a little when you move
+            mirror_x = int(glass.width // 2 + (x - middle) / 4 + (middle - 480) / 30)
+            pane.blit(warped, (mirror_x - warped.get_width() // 2, glass.height - warped.get_height() - 4))
         pygame.draw.line(pane, (255, 255, 255, 80), (8, 26), (32, 2), 6)                 # shine
         pygame.draw.line(pane, (255, 255, 255, 50), (8, 48), (48, 8), 3)
         mask = pygame.Surface(glass.size, pygame.SRCALPHA)

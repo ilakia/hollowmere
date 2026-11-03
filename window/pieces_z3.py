@@ -204,19 +204,21 @@ WAX_FIGURES = [
     {"name": "THE BALLERINA", "body": (250, 190, 210), "hair": (60, 40, 30), "hair_style": "bun", "extra": "tutu"},
     {"name": "BINGO", "body": (230, 200, 60), "legs": (60, 120, 200), "hat": "clown", "clown_face": True,
      "extra": "balloon", "hair_style": "none"},
+    {"name": "STRONGMAN", "body": (200, 60, 60), "legs": (40, 40, 50), "beard": (50, 35, 25), "belt": GOLD,
+     "hair_style": "none"},
 ]
 
 
 def wax_museum(s, cx, ctx, font):
     """A gallery of wax figures on pedestals, each a different character, with velvet ropes. Now and
-    then one of them turns its head. The last pedestal is empty: 'W. HALE, MECHANIC'."""
+    then one of them turns its head."""
     t = ctx["t"]
     hall = pygame.Rect(cx - 330, GROUND_Y - 290, 660, 290)
     box(s, (70, 30, 40), hall)
     for x in range(hall.x + 20, hall.right, 110):                                         # columns
         box(s, (110, 60, 60), (x, hall.y + 20, 16, hall.height - 20), outline=False)
     small = pygame.font.SysFont(None, 13)
-    count = len(WAX_FIGURES) + 1
+    count = len(WAX_FIGURES)
     for i in range(count):
         x = hall.x + 55 + i * 92
         pedestal = pygame.Rect(x - 34, GROUND_Y - 44, 68, 44)
@@ -224,14 +226,10 @@ def wax_museum(s, cx, ctx, font):
         pygame.draw.rect(s, GOLD, (pedestal.x, pedestal.y - 4, pedestal.width, 6))
         plaque = pygame.Rect(x - 42, GROUND_Y - 30, 84, 14)
         pygame.draw.rect(s, CREAM, plaque)
-        if i < len(WAX_FIGURES):
-            look = WAX_FIGURES[i]
-            turn = 6 if math.sin(t * 0.9 + i * 2.3) > 0.93 else 0                        # a head turns...
-            person(s, x, GROUND_Y - 44, look, t, turn=turn)
-            label = small.render(look["name"], True, OUTLINE)
-        else:                                                                             # the empty pedestal
-            label = small.render("W. HALE, MECH.", True, (150, 20, 20))
-            pygame.draw.circle(s, (180, 170, 140), (x, GROUND_Y - 120), 30, 2)
+        look = WAX_FIGURES[i]
+        turn = 6 if math.sin(t * 0.9 + i * 2.3) > 0.93 else 0                            # a head turns...
+        person(s, x, GROUND_Y - 44, look, t, turn=turn)
+        label = small.render(look["name"], True, OUTLINE)
         s.blit(label, label.get_rect(center=plaque.center))
     for i in range(count - 1):                                                            # velvet ropes
         a = hall.x + 55 + i * 92 + 34
