@@ -85,6 +85,28 @@ ZONE_INTROS = {
     3: "The Dark Rides. The ghost train still runs. So does something inside it.",
     4: "The Exit Gate. Dawn is close. Walt walks a little slower now.",
 }
+# One line per attraction, shown while walking up to it: a bit of story plus a useful tip for its ghosts.
+ROOM_TIPS = {
+    "z1_ticket_booth": "Someone still sells tickets here. Two wisps flit about: weak, but quick. Hit them fast.",
+    "z1_carousel": "The horses never stop. Three wisps ride them: one at a time, and keep your HP up.",
+    "z1_cotton_candy": "The mascot's smile is too wide. It hits harder than the wisp: watch your HP.",
+    "z1_photo_booth": "Look closely at the 1987 photo before you go in. The animatronic hits steadily.",
+    "z1_ring_toss": "Two animatronic barkers, no prizes. Long fight: a potion may be worth it here.",
+    "z1_ferris_wheel": "One wraith climbs down the wheel. When it glows, it is about to strike: DEFEND.",
+    "z2_mirrors": "A hundred of you, and no Walt in any mirror. Strange... One animatronic, two wisps.",
+    "z2_barrel": "The barrel spins and laughs. Four wisps tumble out: many small hits, strike quickly.",
+    "z2_tilted_room": "Nothing here stands straight. An animatronic and a wisp wait on the slope.",
+    "z2_laughing_stage": "She has been laughing since 1987. A wraith hides behind her: defend when it glows.",
+    "z2_clown_alley": "Walk through the clown's mouth. Two animatronics and a wisp: a long, hard fight.",
+    "z2_puppet_theater": "Someone is still pulling the strings. Wraith and animatronic: defend on every glow.",
+    "z3_ghost_train": "The ghost train never stopped running. A wraith rides it: watch for the glow.",
+    "z3_tunnel_boats": "Into the skull's mouth. Two wisps and an animatronic in the dark water.",
+    "z3_haunted_manor": "The lights go on and off by themselves. A wraith and two wisps live here.",
+    "z3_log_flume": "Splash! Two animatronics guard the pool. Steady hits: keep a potion ready.",
+    "z3_wax_museum": "One pedestal is empty: 'W. Hale, Mechanic'. Three animatronics: a long fight.",
+    "z3_workshop": "Walt's old workshop. Gears still turn. A wraith and an animatronic: defend on the glow.",
+    "finale_gate": "The gate is so close. Walt walks slower now... When his lantern glows: DEFEND.",
+}
 ENDINGS = {
     "escaped": "The gate creaks open. Dawn. Walt fades into the light. 'Not bad. Not bad at all.'",
     "out_of_lives": "The lights go out. Tomorrow, the photo booth prints a new picture: you, with the 1987 staff.",
@@ -571,9 +593,8 @@ class WindowNarrator:
         c.blit(box, caption)
         for i, line in enumerate(wrap_text(beat["text"], w.font_small, 630)[:2]):
             draw_text(c, line, w.font_small, COLORS["text"], caption.x + 14, caption.y + 10 + 22 * i)
-        walt_text = "Walt is the enemy now" if finale else f"Walt: {w.help_mode}"
-        draw_text(c, f"Director's choice: {beat['title']}  ·  {w.difficulty}  ·  {walt_text}", w.font_small,
-                  COLORS["dim_text"], caption.x + 14, caption.y + 58)        # inside the caption box
+        tip = ROOM_TIPS.get(beat["id"], "")                                  # story + a tip for this room
+        draw_text(c, tip, w.font_small, COLORS["flashlight"], caption.x + 14, caption.y + 58)
         if self.last_result and walked < 250 and appear is None:
             text, band = self.last_result
             draw_text(c, f"Last attraction: {text}", w.font_small, COLORS[band], 480, 158, center=True)
@@ -943,7 +964,7 @@ def ending_scene(w, outcome):
     out and Walt fades into the light. Otherwise: the lights go out one by one. Space skips."""
     w.zone = 4
     w.is_finale = False
-    duration = 9.0 if outcome == "escaped" else 4.0
+    duration = 11.0 if outcome == "escaped" else 6.0
     elapsed = 0.0
     frame = 0
     if outcome == "escaped":
@@ -974,7 +995,11 @@ def ending_scene(w, outcome):
             w.particles.draw(c, dt)
             w.scenery.draw_front(c, 4, [(560, GROUND_Y - 100, 320, (255, 210, 150))])
             if elapsed > 4:
-                draw_text(c, "Dawn.", w.font_big, (255, 230, 190), WIDTH // 2, 175, center=True)
+                draw_text(c, "Dawn.", w.font_big, (255, 230, 190), WIDTH // 2, 120, center=True)
+            if elapsed > 6.5:
+                draw_text(c, "Goodbye, Walt.", w.font_big, (255, 240, 220), WIDTH // 2, 165, center=True)
+            if elapsed > 8.5:
+                draw_text(c, "THE END", w.font_title, (255, 245, 230), WIDTH // 2, 250, center=True)
         else:
             darkness = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
             darkness.fill((0, 0, 0, min(255, int(255 * elapsed / 3.0))))         # the lights go out
@@ -982,6 +1007,8 @@ def ending_scene(w, outcome):
             w.scenery.draw_front(c, 4, [], finale=True)
             c.blit(darkness, (0, 0))
             draw_text(c, "The lights go out...", w.font_big, COLORS["damage"], WIDTH // 2, 200, center=True)
+            if elapsed > 3.5:
+                draw_text(c, "THE END", w.font_title, (200, 60, 60), WIDTH // 2, 290, center=True)
         for y in (0, HEIGHT - 50):                                                # cinema bars
             pygame.draw.rect(c, (0, 0, 0), (0, y, WIDTH, 50))
         w.present(capture=frame % 15 == 0)
