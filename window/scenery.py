@@ -15,7 +15,7 @@ import pygame
 from .art import HEIGHT, WIDTH
 
 GROUND_Y = 385
-MARGIN = 160            # layers are wider than the screen so the camera can drift without showing edges
+MARGIN = 210            # layers are wider than the screen (1380 px = 6 stalls of 230 px, so they repeat seamlessly)
 
 ZONE_MOODS = {
     1: {"name": "Entrance & Midway", "sky": ((30, 24, 66), (96, 58, 112)), "far": (78, 58, 110),
@@ -31,7 +31,8 @@ ZONE_MOODS = {
         "mid": (26, 50, 48), "accent": (130, 255, 190), "accent2": (220, 255, 230), "ground": (40, 58, 54),
         "light": (180, 255, 210), "fog": (190, 240, 215), "sign": "EXIT"},
 }
-LAMPS = [(70, 230), (890, 230)]                     # lamppost lights in screen coordinates (foreground)
+LAMP_Y = 230
+LAMP_SPACING = 820                                 # a lamppost every 820 px of park (foreground, moves fastest)
 
 
 def gradient(size, top, bottom):
@@ -119,7 +120,7 @@ def make_mid_layer(zone, mood, font):
         pygame.draw.rect(layer, mood["accent"], (x + 30, top + 72, 10, 8))     # a prize on the counter
     sign = font.render(mood["sign"], True, mood["accent"])            # zone sign high on the right, above the action
     board = pygame.Rect(0, 0, sign.get_width() + 24, sign.get_height() + 12)
-    board.center = (WIDTH + MARGIN - 190, 128)
+    board.center = (720, 128)
     pygame.draw.rect(layer, mood["mid"], board, border_radius=6)
     pygame.draw.rect(layer, mood["accent"], board, width=2, border_radius=6)
     pygame.draw.line(layer, mood["mid"], (board.centerx, board.bottom), (board.centerx, GROUND_Y), 4)
@@ -137,6 +138,14 @@ def make_ground(mood):
     return ground
 
 
+def tile(surface, layer, offset, y):
+    """Draw a layer moved left by offset; it repeats, so the player can walk on for ever."""
+    width = layer.get_width()
+    x = -int(offset % width)
+    surface.blit(layer, (x, y))
+    surface.blit(layer, (x + width, y))
+
+
 class Scenery:
     """Builds every zone's layers once and draws them with a drifting camera and lights."""
 
@@ -151,6 +160,8 @@ class Scenery:
         self.dark = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         self.glow = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         self.kick = 0.0                 # extra camera push (e.g. towards the ghosts on an attack)
+        self.world_x = 0.0              # how far the player has walked in this zone (pixels)
+        self.last_cam = 0.0
         self.stamps = {}
 
     def glow_stamp(self, radius, color):
@@ -179,7 +190,18 @@ class Scenery:
 
     def camera(self):
         self.kick *= 0.9                                     # the push eases back
-        return 60 * math.sin(time.time() * 0.12) + self.kick
+        self.last_cam = 30 * math.sin(time.time() * 0.12) + self.kick + self.world_x
+        return self.last_cam
+
+    def lamps(self):
+        """Screen positions of the foreground lampposts for the current camera (they repeat along the path)."""
+        positions = []
+        shift = (self.last_cam * 1.2) % LAMP_SPACING
+        for base in (70, 70 + LAMP_SPACING, 70 + 2 * LAMP_SPACING):
+            x = int(base - shift)
+            if -40 < x < WIDTH + 40:
+                positions.append((x, LAMP_Y))
+        return positions
 
     def draw_back(self, surface, zone):
         """Everything behind the characters."""
@@ -194,9 +216,9 @@ class Scenery:
         moon_x = 140 - int(cam * 0.05)
         pygame.draw.circle(surface, (240, 236, 210), (moon_x, 92), 36)
         pygame.draw.circle(surface, mood["sky"][0], (moon_x + 15, 83), 31)
-        surface.blit(far, (-MARGIN - int(cam * 0.25), 0))
-        surface.blit(mid, (-MARGIN - int(cam * 0.55), 0))
-        surface.blit(ground, (-MARGIN - int(cam * 0.8), GROUND_Y))
+        tile(surface, far, cam * 0.25, 0)                    # far rides move slowly ...
+        tile(surface, mid, cam * 0.55, 0)                    # ... stalls a bit faster ...
+        tile(surface, ground, cam * 0.8, GROUND_Y)           # ... the ground almost with the player
         for i in range(17):                                  # string of fairground bulbs (mid depth)
             x = 25 + i * 56 - int(cam * 0.55) % 56
             y = 50 + int(12 * math.sin(i * 0.9))
@@ -211,7 +233,7 @@ class Scenery:
         # self.dark collects "how much darkness to remove" per pixel; light stamps add up where lights overlap
         self.dark.fill((0, 0, 0, 0))
         self.glow.fill((0, 0, 0, 0))
-        all_lights = [(x, y + 20, 260, mood["light"]) for x, y in LAMPS] + list(lights)
+        all_lights = [(x, y + 20, 260, mood["light"]) for x, y in self.lamps()] + list(lights)
         all_lights.append((240, GROUND_Y - 60, 230, mood["light"]))     # soft light on the player's side
         all_lights.append((720, GROUND_Y - 60, 230, mood["light"]))     # and on the ghosts' side
         for x, y, radius, color in all_lights:
@@ -223,7 +245,7 @@ class Scenery:
         shade.blit(self.dark, (0, 0), special_flags=pygame.BLEND_RGBA_SUB)   # lights remove darkness
         surface.blit(shade, (0, 0))
         surface.blit(self.glow, (0, 0))
-        for x, y in LAMPS:                                                # foreground lampposts
+        for x, y in self.lamps():                                         # foreground lampposts
             pygame.draw.rect(surface, (18, 14, 22), (x - 5, y, 10, GROUND_Y - y + 20))
             pygame.draw.rect(surface, (18, 14, 22), (x - 16, y - 10, 32, 14), border_radius=4)
             pygame.draw.circle(surface, (255, 240, 200), (x, y + 6), 7)

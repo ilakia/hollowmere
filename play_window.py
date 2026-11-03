@@ -61,6 +61,17 @@ WALT_BUBBLE = {
     "heal": "I've got bandages if it gets bad.",
     "fight": "Stay behind me.",
 }
+WALK_DISTANCE = 450      # pixels of park walked to reach the next attraction
+WALK_SPEED = 230         # pixels per second while RIGHT is held (about 2 seconds per attraction)
+APPEAR_SECONDS = 1.6     # the ghosts fade in, then the fight starts
+TRAVEL_LINES = ["This way, kid.", "Stay close.", "Don't touch anything that moves.", "Almost there.",
+                "I used to fix these rides.", "Hear that? Keep walking."]
+ZONE_INTROS = {
+    1: "The Entrance & Midway. Ticket booths, a carousel that turns by itself, and the ferris wheel.",
+    2: "The Funhouse. Mirrors, barrels and a tilted room. Nothing here is the right way up.",
+    3: "The Dark Rides. The ghost train still runs. So does something inside it.",
+    4: "The Exit Gate. Dawn is close. Walt walks a little slower now.",
+}
 ENDINGS = {
     "escaped": "The gate creaks open. Dawn. Walt fades into the light. 'Not bad. Not bad at all.'",
     "out_of_lives": "The lights go out. Tomorrow, the photo booth prints a new picture: you, with the 1987 staff.",
@@ -72,6 +83,12 @@ def close_game():
     """The window was closed: stop everything (the game is not saved)."""
     pygame.quit()
     sys.exit(0)
+
+
+def draw_arrow(surface, x, y, color):
+    """A right-pointing arrow (drawn, because the default font has no arrow character)."""
+    pygame.draw.rect(surface, color, (x - 40, y - 8, 40, 16))
+    pygame.draw.polygon(surface, color, [(x, y - 22), (x + 30, y), (x, y + 22)])
 
 
 def ghost_x(index, count):
@@ -139,14 +156,20 @@ class GameWindow:
         draw_text(surface, f"director: {self.director_name}   ·   {sound}", self.font_small,
                   COLORS["dim_text"], WIDTH - 300, 13)
 
-    def draw_sprite(self, name, x, y_bottom, flash=False, flip=False, dy=0):
-        """Draw a sprite standing on the ground at x (its centre). flash = white hit silhouette."""
+    def draw_sprite(self, name, x, y_bottom, flash=False, flip=False, dy=0, alpha=255):
+        """Draw a sprite standing on the ground at x (its centre). flash = white hit silhouette,
+        alpha < 255 = partly see-through (ghosts fading in)."""
         image, white, outline = self.sprites[name]
         if flash:
             image = white
         if flip:
             image = pygame.transform.flip(image, True, False)
             outline = pygame.transform.flip(outline, True, False)
+        if alpha < 255:
+            image = image.copy()
+            image.set_alpha(alpha)
+            outline = outline.copy()
+            outline.set_alpha(alpha)
         left = x - image.get_width() // 2
         top = y_bottom - image.get_height() + dy
         shadow = pygame.Surface((image.get_width(), 16), pygame.SRCALPHA)
@@ -193,6 +216,41 @@ class GameWindow:
         for button in buttons:
             button.draw(self.screen, self.font)
         pygame.display.flip()
+
+    def tick(self):
+        """Handle window events for one frame of a moving scene. Output: seconds since the last frame
+        (a fixed 0.1 s in demo mode, so the demo runs fast and the same every time)."""
+        if self.demo_dir is not None:
+            pygame.event.pump()
+            return 0.1
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                close_game()
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_m:
+                self.sounds.toggle_mute()
+        self.clock.tick(FPS)
+        now = time.time()
+        dt = min(0.1, now - self.last_frame)
+        self.last_frame = now
+        return dt
+
+    def walk_held(self):
+        """True while the player holds RIGHT (or Space, or the mouse button). The demo always walks."""
+        if self.demo_dir is not None:
+            return True
+        keys = pygame.key.get_pressed()
+        return keys[pygame.K_RIGHT] or keys[pygame.K_SPACE] or pygame.mouse.get_pressed()[0]
+
+    def present(self, capture=False):
+        """Show the canvas (with shake and dark edges). capture=True saves a screenshot in demo mode."""
+        self.screen.fill((0, 0, 0))
+        self.screen.blit(self.canvas, self.shake.offset())
+        self.screen.blit(self.vignette, (0, 0))
+        pygame.display.flip()
+        if capture and self.demo_dir is not None and self.demo_shots < 400:
+            Path(self.demo_dir).mkdir(parents=True, exist_ok=True)
+            pygame.image.save(self.screen, str(Path(self.demo_dir) / f"screen_{self.demo_shots:03d}.png"))
+            self.demo_shots += 1
 
     def demo_step(self, draw_scene, buttons):
         """Demo mode: draw one frame, save it as a screenshot, choose automatically."""
@@ -246,7 +304,9 @@ def title_menu(w, director):
         w.fog.draw(w.canvas, dt)
         w.scenery.draw_front(w.canvas, 1, [(355, 260, 160, COLORS["flashlight"])])
         flicker = 200 + int(55 * math.sin(time.time() * 3))
-        draw_glow(w.canvas, WIDTH // 2, 120, 220, (120, 60, 160), strength=18)
+        band = pygame.Surface((WIDTH, 120), pygame.SRCALPHA)
+        band.fill((10, 8, 20, 150))
+        w.canvas.blit(band, (0, 60))
         draw_text(w.canvas, "HOLLOWMERE", w.font_title, (flicker, 220, 255), WIDTH // 2, 115, center=True)
         draw_text(w.canvas, "One night in a haunted theme park. Walt knows the way out... or does he?",
                   w.font, COLORS["dim_text"], WIDTH // 2, 175, center=True)
@@ -273,8 +333,10 @@ def title_menu(w, director):
 
 # ---------------------------------------------------------------- director wrapper (cards + map)
 class WindowNarrator:
-    """Wraps any director: shows the story card with the park map before each room and a
-    result card after it, and adds the room's timing score to the saved row."""
+    """Wraps any director and turns its choices into the walk-and-fight flow:
+    a zone card with the park map when a new zone starts, then for every room: walk through the
+    park to the chosen attraction, the ghosts appear, and the fight (the engine's room) starts.
+    It also adds the room's timing score to the saved row."""
 
     def __init__(self, inner, story, window, policy):
         self.inner = inner
@@ -283,6 +345,9 @@ class WindowNarrator:
         self.policy = policy
         self.last_mode = None
         self.visited = []
+        self.zone_seen = None
+        self.zone_titles = []          # attractions already played in the current zone
+        self.last_result = None        # (text, band) of the previous room, shown while walking
 
     def decide(self, state):
         decision = self.inner.decide(state)
@@ -290,34 +355,163 @@ class WindowNarrator:
         if beat is None:                      # invalid choice: the engine repairs it, nothing to show
             return decision
         w = self.window
-        zone = C.ZONE_NAMES[state["zone"]]
-        w.room_label = f"Room {state['room_index'] + 1}/{C.ROOMS_PER_RUN}  ·  {zone}: {beat['title']}"
+        w.room_label = f"Room {state['room_index'] + 1}/{C.ROOMS_PER_RUN}  ·  {C.ZONE_NAMES[state['zone']]}"
         w.is_finale = state["is_finale"]
         w.zone = state["zone"]
         w.help_mode = None if state["is_finale"] else decision.get("help_mode")
         w.difficulty = decision.get("difficulty") if decision.get("difficulty") in C.DIFFICULTY else "normal"
-        paragraphs = [(beat["text"], COLORS["text"])]
-        if w.help_mode and w.help_mode != self.last_mode:      # Walt only speaks when his behaviour changes
-            paragraphs.append((f"Walt: '{WALT_BUBBLE.get(w.help_mode, '')}'", COLORS["flashlight"]))
-            self.last_mode = w.help_mode
-        walt_text = "Walt is the enemy now" if state["is_finale"] else f"Walt: {w.help_mode}"
-        paragraphs.append((f"Director's choice: {w.difficulty} difficulty  ·  {walt_text}", COLORS["dim_text"]))
+        if state["zone"] != self.zone_seen:
+            self.zone_card(state, beat)
+            self.zone_seen = state["zone"]
+            self.zone_titles = []
+            w.scenery.world_x = 0.0
+        self.walk_and_meet(state, beat)
+        w.bubble = WALT_BUBBLE.get(w.help_mode, "")
+        return decision
+
+    def zone_card(self, state, beat):
+        """Card with the park map at the start of each zone."""
+        w = self.window
+        paragraphs = [(ZONE_INTROS[state["zone"]], COLORS["text"])]
+        if self.last_result:
+            paragraphs.append((f"Last attraction: {self.last_result[0]}", COLORS[self.last_result[1]]))
+        paragraphs.append(("Hold  RIGHT  (or the mouse) to walk. Ghosts appear at every attraction.", COLORS["dim_text"]))
 
         def park_map(surface, rect):
             draw_park_map(surface, rect, self.story.beats, self.visited, beat["id"], w.font_small)
 
-        w.card(beat["title"], paragraphs, side=park_map)
-        w.bubble = WALT_BUBBLE.get(w.help_mode, "")
-        return decision
+        w.card(C.ZONE_NAMES[state["zone"]], paragraphs, side=park_map, button_label="Walk on  [Space]")
+
+    def walk_and_meet(self, state, beat):
+        """Walk to the attraction (hold RIGHT), then the ghosts fade in and the fight starts."""
+        w = self.window
+        start_world = w.scenery.world_x
+        walked = 0.0
+        appear = None                    # seconds since the ghosts started to appear (None = still walking)
+        moved = False
+        frame = 0
+        if state["is_finale"]:
+            w.bubble = "The gate is just ahead. Nearly out, kid."
+        elif w.help_mode != self.last_mode:            # Walt explains his new behaviour once
+            w.bubble = WALT_BUBBLE.get(w.help_mode, "")
+            self.last_mode = w.help_mode
+        else:
+            w.bubble = TRAVEL_LINES[state["room_index"] % len(TRAVEL_LINES)]
+        while True:
+            dt = w.tick()
+            stepping = False
+            if appear is None:
+                if w.walk_held():
+                    walked = min(WALK_DISTANCE, walked + WALK_SPEED * dt)
+                    w.scenery.world_x = start_world + walked
+                    stepping = True
+                    moved = True
+                if walked >= WALK_DISTANCE:
+                    appear = 0.0
+                    w.sounds.play("charge")
+                    if state["is_finale"]:
+                        w.bubble = "I never left this park, kid. Neither will you."
+            else:
+                appear += dt
+                if appear >= APPEAR_SECONDS:
+                    return
+            self.draw_walk(state, beat, walked, appear, stepping, moved)
+            capture = frame in (0, 12) or (appear is not None and frame % 6 == 0)
+            w.present(capture=capture)
+            frame += 1
+
+    def draw_walk(self, state, beat, walked, appear, stepping, moved):
+        w = self.window
+        c = w.canvas
+        finale = state["is_finale"]
+        w.scenery.draw_back(c, w.zone)
+        k = 0.0 if appear is None else min(1.0, appear / 0.6)          # slide into fight positions
+        player_x = int(230 + (170 - 230) * k)
+        bob = int(abs(math.sin(walked / 20)) * 7) if stepping else 0  # head bobs while walking
+        lights = []
+        w.draw_sprite("player", player_x, GROUND_Y, dy=-bob)
+        if finale:
+            k2 = 0.0 if appear is None else min(1.0, appear / 1.0)
+            walt_x = int(110 + (730 - 110) * k2)                      # Walt walks over to the other side ...
+            changed = appear is not None and appear > 1.0             # ... and shows what he really is
+            flash = appear is not None and 0.9 < appear < 1.15
+            w.draw_sprite("walt_ghost" if changed else "walt", walt_x, GROUND_Y, flash=flash, flip=changed)
+            if changed:
+                lights.append((walt_x, GROUND_Y - 60, 200, (120, 255, 190)))
+        else:
+            walt_x = int(110 + (300 - 110) * k)
+            walt_bob = int(abs(math.sin(walked / 20 + 1.2)) * 6) if stepping else 0
+            w.draw_sprite("walt", walt_x, GROUND_Y, dy=-walt_bob)
+            lights.append((walt_x + 90, GROUND_Y - 70, 150, COLORS["flashlight"]))
+            if appear is not None:
+                alpha = int(255 * min(1.0, appear / 1.1))              # ghosts fade in
+                enemies = beat["enemies"]
+                for i, kind in enumerate(enemies):
+                    x = ghost_x(i, len(enemies))
+                    w.draw_sprite(kind, x, GROUND_Y, flip=True, alpha=alpha)
+                    if kind == "wisp":
+                        lights.append((x, GROUND_Y - 40, 90, (150, 200, 255)))
+        w.fog.draw(c, 0.03)
+        w.scenery.draw_front(c, w.zone, lights, finale=finale and appear is not None)
+
+        # interface
+        w.draw_top_bar(c)
+        caption = pygame.Rect(150, 52, 660, 86)
+        box = pygame.Surface(caption.size, pygame.SRCALPHA)
+        box.fill((10, 8, 20, 170))
+        c.blit(box, caption)
+        for i, line in enumerate(wrap_text(beat["text"], w.font_small, 630)[:2]):
+            draw_text(c, line, w.font_small, COLORS["text"], caption.x + 14, caption.y + 10 + 22 * i)
+        walt_text = "Walt is the enemy now" if finale else f"Walt: {w.help_mode}"
+        draw_text(c, f"Director's choice: {beat['title']}  ·  {w.difficulty}  ·  {walt_text}", w.font_small,
+                  COLORS["dim_text"], caption.x + 14, caption.y + 58)        # inside the caption box
+        if self.last_result and walked < 250 and appear is None:
+            text, band = self.last_result
+            draw_text(c, f"Last attraction: {text}", w.font_small, COLORS[band], 480, 158, center=True)
+        # the attraction title needs the space; in the finale Walt only speaks once he has turned
+        hide_bubble = appear is not None and (not finale or appear < 1.0)
+        if w.bubble and not hide_bubble:
+            draw_bubble(c, w.font_small, w.bubble, walt_x, 250)
+        draw_bar(c, player_x - 60, GROUND_Y + 12, 120, 12, state["hp"] / state["max_hp"])
+        draw_text(c, f"{state['hp']:.0f}/{state['max_hp']} HP", w.font_small, COLORS["text"], player_x - 60, GROUND_Y + 30)
+        for i in range(state["potions"]):
+            pygame.draw.rect(c, COLORS["potion"], (player_x - 60 + i * 18, GROUND_Y + 52, 12, 18), border_radius=3)
+        if not moved:
+            draw_text(c, "hold RIGHT to walk", w.font, COLORS["text"], 700, 300, center=True)
+            draw_arrow(c, 860, 300, COLORS["flashlight"])
+        if appear is not None:
+            draw_text(c, beat["title"].upper(), w.font_big, COLORS["charge"], 480, 190, center=True)
+            line = "Walt turns around..." if finale else "Ghosts appear!  Get ready..."
+            draw_text(c, line, w.font, COLORS["text"], 480, 225, center=True)
+        self.draw_track(c, state, beat, walked)
+
+    def draw_track(self, c, state, beat, walked):
+        """Progress through the zone at the bottom: the zone's attractions, '?' for ones not chosen yet."""
+        w = self.window
+        first_room = C.ZONE_OF_ROOM.index(state["zone"])
+        count = C.ZONE_OF_ROOM.count(state["zone"])
+        index = state["room_index"] - first_room
+        labels = self.zone_titles + [beat["title"]] + ["?"] * (count - index - 1)
+        track = pygame.Rect(300, 500, 360, 8)
+        start = max(0.0, index - 0.5)
+        end = index + 0.5
+        share = (start + (end - start) * walked / WALK_DISTANCE) / count
+        pygame.draw.rect(c, COLORS["bar_back"], track, border_radius=4)
+        pygame.draw.rect(c, COLORS["flashlight"], (track.x, track.y, int(track.width * share), 8), border_radius=4)
+        for i, label in enumerate(labels):
+            x = track.x + int(track.width * (i + 0.5) / count)
+            pygame.draw.circle(c, COLORS["charge"] if i == index else COLORS["text"], (x, track.centery), 7)
+            draw_text(c, label, w.font_small, COLORS["dim_text"], x, track.y + 24, center=True)
+        pygame.draw.circle(c, (70, 190, 200), (track.x + int(track.width * share), track.centery), 9)
 
     def observe(self, state, decision, row):
         self.visited.append(row["beat_id"])
+        self.zone_titles.append(self.story.by_id[row["beat_id"]]["title"])
         row["timing_score"] = self.policy.take_room_timing()
         band = row["band"]
         result = "cleared" if row["cleared"] else "not cleared"
-        text = f"{result}, deaths {row['deaths']}, HP lost {row['hp_lost_ratio']:.0%}"
+        self.last_result = (f"{result}, HP lost {row['hp_lost_ratio']:.0%}, {BAND_TEXT[band]}", band)
         self.window.sounds.play("win" if band == "in_band" else "click")
-        self.window.card("Room result", [(text, COLORS["text"]), (f"This room was {BAND_TEXT[band]}.", COLORS[band])])
         self.inner.observe(state, decision, row)
 
 
@@ -567,7 +761,10 @@ def main():
     outcome = rows[-1]["run_outcome"]
     window.sounds.play("win" if outcome == "escaped" else "death")
     window.room_label = "The end"
-    window.card("Escaped!" if outcome == "escaped" else "Trapped", [(ENDINGS[outcome], COLORS["text"])],
+    paragraphs = [(ENDINGS[outcome], COLORS["text"])]
+    if controller.last_result:
+        paragraphs.append((f"Last attraction: {controller.last_result[0]}", COLORS[controller.last_result[1]]))
+    window.card("Escaped!" if outcome == "escaped" else "Trapped", paragraphs,
                 button_label="Close  [Space]")
     pygame.quit()
 

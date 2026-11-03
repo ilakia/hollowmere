@@ -18,7 +18,7 @@ python compare_directors.py --controllers fixed random rule  # rule director vs 
 python failure_predictor.py                 # failure predictor (trained on random-director data)
 python bandit_experiment.py                 # train + test the bandit, draws the learning curve
 python play.py --controller rule            # play it yourself in the terminal (fixed, random, rule, bandit)
-python play_window.py                       # game window: title menu, pixel art, sound, park map, timing bar
+python play_window.py                       # game window: walk through the park (hold RIGHT), fight the ghosts that appear
 python robustness_experiment.py --games 300 # held-out bot type and +/-20% sensitivity check
 
 # LLM directors need Ollama: brew install ollama && brew services start ollama && ollama pull llama3.2:3b
@@ -50,7 +50,7 @@ python llm_experiment.py --controller llm_risk --games 25 --batch 2 --pause 180 
 | `llm_experiment.py` | LLM directors vs the others on the same seeds, in batches with cooling pauses |
 | `robustness_experiment.py` | Held-out bot type (re-learn without one type, test on it) and +/-20% changes to the game |
 | `play.py` | Human play in the terminal, telemetry saved under an anonymous ID |
-| `play_window.py` | Game window (pygame): title menu (pick the director), park map, timing bar for attacks; games saved to `data/window_runs.csv`; `--demo` plays by itself for testing |
+| `play_window.py` | Game window (pygame): title menu (pick the director), walk through each zone with Walt (hold RIGHT), ghosts appear at each attraction and the room's fight starts, park map per zone, timing bar for attacks; games saved to `data/window_runs.csv`; `--demo` plays by itself for testing |
 | `window/` | Pixel-art sprites (`art.py`), layered park per zone with lighting (`scenery.py`), particles, shake, fog (`effects.py`), sounds and music generated in code (`sound.py`), park map (`park_map.py`) |
 
 **Seeds:** 0–1999 training (tables, tuning, bandit learning), 50000+ validation (bandit exploration strength), 100000–100999 final director test, 200000+ failure-predictor test. Nothing was tuned on test seeds.
