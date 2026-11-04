@@ -27,7 +27,7 @@ ghosts (wisps, animatronics, wraiths) still appear in the other rooms; the final
 | B | **Rosa Lindqvist** | Photographer (Photo Booth) | **Shine into her lens** when she lifts the camera: her own flash blinds her (frozen, double damage). Otherwise her flash blinds you | "A camera's blind to everything but light. Kids shone a torch into her lens." | Camera goes up |
 | B | **Lily Ward** (and her reflection) | Hall of Mirrors attendant | **Attack the real Lily** (red ribbon); hitting the reflection heals her, until the mirror cracks after 3 hits | "Never took off her mother's red ribbon. Her reflections never had it." | Two Lilys, one with a ribbon |
 | C | **Benny Ortiz** | Carousel operator (Carousel) | **Wait (defend) while it spins, strike when the music stops**; attacking the spinning ride throws you off | "Only time Benny stood still was when the music box ran down." | Music stops, horses freeze |
-| C | **Henry Pike** | Barker of Clown Alley | **Call his stage name** (new action, N; 3 choices): "The Great Henry" calms him and ends the fight | "Only way to calm him down was to call him by his stage name: The Great Henry." | He shouts "Who am I?!" |
+| C | **Henry Pike** | Barker of Clown Alley | **Call his stage name** (new action, N; 3 choices): "The Great Henry" calms him for 3 turns (no attacks, double damage), then he shouts again | "Only way to calm him down was to call him by his stage name: The Great Henry." | He shouts "Who am I?!" |
 
 Balance check (`python story_check.py`, bots, 300 fights per bot type): using the weakness saves turns and
 HP for every victim (e.g. Martha 11.8 -> 8.8 turns and 56% -> 0% HP lost; Henry 14.7 -> 1 turn). For Ned and

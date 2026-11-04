@@ -92,6 +92,15 @@ class WaltVoice:
             self.preview_process.terminate()
         self.preview_process = subprocess.Popen(["say", "-v", voice, "-r", str(RATE), text])
 
+    def is_speaking(self):
+        """True while Walt is still saying his current line (scenes wait for it before moving on)."""
+        return self.channel is not None and self.channel.get_busy()
+
+    def stop(self):
+        """Stop the current line (the player skipped the scene with Space)."""
+        if self.channel is not None:
+            self.channel.stop()
+
     def speak(self, text, ghost=False, muted=False):
         """Say a line (if its file is ready and sound is on). A new line interrupts the previous one."""
         sound = self.ready.get((text, ghost))

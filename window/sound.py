@@ -50,6 +50,20 @@ def make_music():
     return melody + echo + hum
 
 
+def make_carousel_waltz():
+    """Benny's carousel: a bright, bouncy waltz (oom-pah-pah) on a calliope-like square tone, about 6 s.
+    It loops while the carousel spins and goes silent when the music box runs down."""
+    melody = [523, 659, 784, 659, 587, 698, 880, 698, 523, 659, 784, 1047, 988, 784, 659, 587]
+    bass = [131, 196, 196, 147, 220, 220, 131, 196, 196, 165, 196, 196, 147, 196, 196, 131]
+    beat = 0.36
+    parts = []
+    for i in range(len(melody)):
+        note = tone(melody[i], beat, 0.12, decay=3.0, wave="square") * 0.6 + tone(melody[i], beat, 0.1, decay=3.0)
+        oom = tone(bass[i], beat, 0.16 if i % 3 == 0 else 0.08, decay=8.0)
+        parts.append(note + oom)
+    return join(*parts)
+
+
 def build_sounds():
     """All game sounds as wave arrays. Output: dict name -> numpy array."""
     return {
@@ -73,6 +87,8 @@ class SoundBank:
     def __init__(self, enabled=True):
         self.sounds = {}
         self.music = None
+        self.carousel = None
+        self.carousel_channel = None
         self.muted = not enabled
         if not enabled:
             return
@@ -83,6 +99,8 @@ class SoundBank:
                 self.sounds[name] = self.to_sound(wave, channels)
             self.music = self.to_sound(make_music(), channels)
             self.music.set_volume(0.45)                    # quieter, so Walt's voice stays clear
+            self.carousel = self.to_sound(make_carousel_waltz(), channels)
+            self.carousel.set_volume(0.6)
         except (pygame.error, NotImplementedError):      # no sound device: play silently
             self.sounds = {}
             self.music = None
@@ -96,6 +114,28 @@ class SoundBank:
     def play(self, name):
         if not self.muted and name in self.sounds:
             self.sounds[name].play()
+
+    def carousel_music(self, playing):
+        """Benny's room: the waltz plays while the carousel spins and stops dead when the music box runs
+        down. The park's background music is paused meanwhile, so the silence is easy to notice."""
+        if self.carousel is None or self.muted:
+            return
+        busy = self.carousel_channel is not None and self.carousel_channel.get_busy()
+        if playing and not busy:
+            if self.music is not None:
+                self.music.stop()
+            self.carousel_channel = self.carousel.play(loops=-1)
+        if not playing and busy:
+            self.carousel_channel.stop()
+
+    def end_carousel(self):
+        """Leave Benny's room: stop the waltz, back to the park music."""
+        if self.carousel_channel is not None and self.carousel_channel.get_busy():
+            self.carousel_channel.stop()
+        self.carousel_channel = None
+        if self.music is not None and not self.muted:
+            self.music.stop()
+            self.music.play(loops=-1)
 
     def start_music(self):
         if not self.muted and self.music is not None:

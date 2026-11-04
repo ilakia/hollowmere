@@ -71,6 +71,12 @@ INTRO_LINE = "Name's Walt. Stick with me, I know the way out."
 GATE_LINE = "The gate is just ahead. Nearly out, kid."
 REVEAL_LINE = "I never left this park, kid. Neither will you."
 FAREWELL_LINE = "Not bad, kid. Not bad at all. Go on. Don't look back."
+# Flashback pictures stay at least MEMORY_SECONDS after Walt starts the line, and until he has finished it
+MEMORY_SECONDS = 6.0
+MEMORY_WAIT_MAX = 8.0            # wait at most this long for the line before (e.g. the gate line) to end
+MEMORY_SECONDS_MAX = 30.0
+# After the escape the player chooses: "The End" or "...or maybe not?" (= straight into the next night)
+NEXT_NIGHT = {None: "A", "A": "B", "B": "C"}
 # Finale: ghost-Walt speaks in bubbles (and in his slow ghost voice)
 FINALE_START_LINE = "Now you know, kid. Let's finish this."
 FINALE_CHARGE_LINE = "Here comes the light!"
@@ -222,6 +228,7 @@ class GameWindow:
         self.voice_index = 0             # which of VOICE_OPTIONS Walt speaks with (chosen on the title screen)
         self.player_id = ""              # typed on the title screen (a nickname or code)
         self.story_night = None          # None = classic game; "A" / "B" / "C" = Study 2 story mode night
+        self.next_night_now = False      # True = the player chose "...or maybe not?": next night, no title
         self.companion = "scripted"      # story mode: silent / scripted (LLM Walt comes in week 2)
         self.save_path = "data/window_runs.csv"
         ghost_spoken = ([REVEAL_LINE, FLASHBACK_INTRO, FLASHBACK_NONE] + list(FLASHBACK_LINES.values()) +
@@ -641,14 +648,22 @@ class WindowNarrator:
         """One flashback picture (about 6 s, Space to go on): the remembered room in sepia, with Walt
         still looking human in it, a glowing ring around the clue, and ghost-Walt's words."""
         w = self.window
-        w.voice.speak(line, ghost=True, muted=w.sounds.muted)
         zone = self.story.by_id[beat_id]["zone"] if beat_id else 4
         saved_world, saved_beat = w.scenery.world_x, w.set_beat
         elapsed, frame = 0.0, 0
-        while elapsed < 6.5:
+        spoken_at = None                 # when Walt started this line (he first finishes the one before)
+        while True:
             dt = w.tick()
             elapsed += dt
+            if spoken_at is None and (not w.voice.is_speaking() or elapsed > MEMORY_WAIT_MAX):
+                w.voice.speak(line, ghost=True, muted=w.sounds.muted)
+                spoken_at = elapsed
+            if spoken_at is not None and elapsed - spoken_at > MEMORY_SECONDS and not w.voice.is_speaking():
+                break                    # shown long enough AND Walt has finished his sentence
+            if elapsed > MEMORY_SECONDS_MAX:
+                break                    # safety net, e.g. if the sound device hangs
             if w.demo_dir is None and elapsed > 1.0 and pygame.key.get_pressed()[pygame.K_SPACE]:
+                w.voice.stop()
                 break
             c = w.canvas
             w.scenery.world_x = 0.0
@@ -676,7 +691,8 @@ class WindowNarrator:
                 w.scenery.draw_front(c, zone, [(730, GROUND_Y - 60, 200, (120, 255, 190))], finale=True)
             for y in (0, HEIGHT - 50):                                                    # cinema bars
                 pygame.draw.rect(c, (0, 0, 0), (0, y, WIDTH, 50))
-            draw_bubble(c, w.font_small, line, 250 if beat_id else 730, 190)       # memories: left, clue stays visible
+            if spoken_at is not None:
+                draw_bubble(c, w.font_small, line, 250 if beat_id else 730, 190)   # memories: left, clue stays visible
             if elapsed > 1.0:
                 draw_text(c, "Space", w.font_small, COLORS["dim_text"], WIDTH - 60, HEIGHT - 30, center=True)
             w.present(capture=frame % 12 == 0)
@@ -1177,10 +1193,11 @@ def ending_scene(w, outcome):
     frame = 0
     if outcome == "escaped":
         w.voice.speak(FAREWELL_LINE, ghost=True, muted=w.sounds.muted)
-    while elapsed < duration:
+    while elapsed < duration or (w.voice.is_speaking() and elapsed < 30):   # let Walt finish his goodbye
         dt = w.tick()
         elapsed += dt
         if w.demo_dir is None and pygame.key.get_pressed()[pygame.K_SPACE] and elapsed > 0.5:
+            w.voice.stop()
             break
         c = w.canvas
         w.scenery.draw_back(c, 4)
@@ -1206,8 +1223,6 @@ def ending_scene(w, outcome):
                 draw_text(c, "Dawn.", w.font_big, (255, 230, 190), WIDTH // 2, 120, center=True)
             if elapsed > 6.5:
                 draw_text(c, "Goodbye, Walt.", w.font_big, (255, 240, 220), WIDTH // 2, 165, center=True)
-            if elapsed > 8.5:
-                draw_text(c, "THE END", w.font_title, (255, 245, 230), WIDTH // 2, 250, center=True)
         else:
             darkness = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
             darkness.fill((0, 0, 0, min(255, int(255 * elapsed / 3.0))))         # the lights go out
@@ -1215,8 +1230,6 @@ def ending_scene(w, outcome):
             w.scenery.draw_front(c, 4, [], finale=True)
             c.blit(darkness, (0, 0))
             draw_text(c, "The lights go out...", w.font_big, COLORS["damage"], WIDTH // 2, 200, center=True)
-            if elapsed > 3.5:
-                draw_text(c, "THE END", w.font_title, (200, 60, 60), WIDTH // 2, 290, center=True)
         for y in (0, HEIGHT - 50):                                                # cinema bars
             pygame.draw.rect(c, (0, 0, 0), (0, y, WIDTH, 50))
         w.present(capture=frame % 15 == 0)
@@ -1253,14 +1266,23 @@ def play_one_game(window, story, args):
     window.bubble = ""
     window.scenery.world_x = 0.0
     window.set_beat = None
-    director = title_menu(window, window.director_name)
+    if window.next_night_now:                 # "...or maybe not?" on the end card: no title screen
+        window.next_night_now = False
+        director = window.director_name
+        window.room_label = "Hollowmere Park, the next midnight"
+        window.card("The next night...", [
+            ("You wake up inside Hollowmere Park again. The gates are locked again.", COLORS["text"]),
+            ("A flashlight comes closer through the fog. You know whose it is.", COLORS["flashlight"])],
+            button_label="Follow the light  [Space]")
+    else:
+        director = title_menu(window, window.director_name)
+        window.room_label = "Hollowmere Park, midnight"
+        window.voice.speak(INTRO_LINE, muted=window.sounds.muted)
+        window.card("Midnight", [
+            ("You wake up inside Hollowmere Park. The gates are locked.", COLORS["text"]),
+            ("An old mechanic with a flashlight finds you. 'Name's Walt. Stick with me, I know the way out.'",
+             COLORS["flashlight"])], button_label="Follow Walt  [Space]")
     window.director_name = director
-    window.room_label = "Hollowmere Park, midnight"
-    window.voice.speak(INTRO_LINE, muted=window.sounds.muted)
-    window.card("Midnight", [
-        ("You wake up inside Hollowmere Park. The gates are locked.", COLORS["text"]),
-        ("An old mechanic with a flashlight finds you. 'Name's Walt. Stick with me, I know the way out.'",
-         COLORS["flashlight"])], button_label="Follow Walt  [Space]")
     if window.story_night is not None:        # Study 2: a story-mode night
         from window.story_window import play_story_night
         window.director_name = "Night of the Fire"      # the Walt version stays hidden (blind playtest)
@@ -1321,14 +1343,25 @@ def main():
         paragraphs = [(ENDINGS[outcome], COLORS["text"])]
         if window.last_result:
             paragraphs.append((f"Last attraction: {window.last_result[0]}", COLORS[window.last_result[1]]))
-        choice = window.card("Escaped!" if outcome == "escaped" else "Trapped", paragraphs,
-                             choices=[("again", "Play again  [Space]", [pygame.K_SPACE, pygame.K_RETURN]),
-                                      ("quit", "Quit  [Q]", [pygame.K_q])])
+        next_night = NEXT_NIGHT.get(window.story_night) if outcome == "escaped" else None
+        if next_night is not None:          # escaped, and another night is waiting
+            choice = window.card("The End?", paragraphs,
+                                 choices=[("next", "...or maybe not?  [Space]", [pygame.K_SPACE, pygame.K_RETURN]),
+                                          ("again", "Title screen  [T]", [pygame.K_t]),
+                                          ("quit", "The End  [Q]", [pygame.K_q])])
+        else:                               # trapped, or the last night is over
+            title = "The End" if outcome == "escaped" else "Trapped"
+            choice = window.card(title, paragraphs,
+                                 choices=[("again", "Play again  [Space]", [pygame.K_SPACE, pygame.K_RETURN]),
+                                          ("quit", "Quit  [Q]", [pygame.K_q])])
         if args.demo is not None:
             print(f"demo finished ({outcome}), screenshots in {args.demo}")
             break
         if choice == "quit":
             break
+        if choice == "next":
+            window.story_night = next_night
+            window.next_night_now = True
     pygame.quit()
 
 

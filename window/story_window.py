@@ -28,6 +28,33 @@ SILENT_LINE = "Careful, kid. Something's here."
 BRAINS = {"silent": SilentBrain, "scripted": ScriptedBrain}
 
 
+def draw_music_box(c, w, x, y, playing):
+    """Benny's music box on the ground: the key turns and notes float up while it plays; when it runs
+    down the lid drops, the key stops and the notes are gone."""
+    box = pygame.Rect(x - 34, y - 34, 68, 34)
+    pygame.draw.rect(c, (110, 70, 40), box, border_radius=4)
+    pygame.draw.rect(c, (215, 175, 80), box, 2, border_radius=4)
+    lid_open = 22 if playing else 0
+    pygame.draw.polygon(c, (130, 85, 50), [(box.x, box.y), (box.right, box.y),
+                                           (box.right - 6, box.y - lid_open), (box.x + 6, box.y - lid_open)])
+    if playing:                                                     # a tiny dancer turning on top
+        turn = math.sin(time.time() * 6)
+        pygame.draw.line(c, (250, 220, 230), (x, box.y - 4), (x + int(6 * turn), box.y - 20), 3)
+        for i in range(3):                                          # notes floating up
+            phase = (time.time() * 0.8 + i / 3) % 1.0
+            nx = x + 30 + int(14 * math.sin(phase * 6 + i))
+            ny = box.y - 10 - int(phase * 60)
+            pygame.draw.circle(c, (255, 230, 150), (nx, ny), 4)
+            pygame.draw.line(c, (255, 230, 150), (nx + 4, ny), (nx + 4, ny - 12), 2)
+    key_angle = time.time() * 6 if playing else 0.0                 # the winding key on the side
+    kx, ky = box.right + 8, box.centery
+    pygame.draw.line(c, (200, 200, 210), (box.right, ky), (kx, ky), 3)
+    for side in (-1, 1):
+        pygame.draw.line(c, (200, 200, 210), (kx, ky),
+                         (kx + int(10 * math.cos(key_angle) * side), ky + int(10 * math.sin(key_angle) * side)), 4)
+    draw_text(c, "music box", w.font_small, COLORS["dim_text"], x, y + 14, center=True)
+
+
 class StoryPolicy(PW.WindowPolicy):
     """The human player in story mode: the normal fight screen plus the victims' tells and actions."""
 
@@ -65,14 +92,19 @@ class StoryPolicy(PW.WindowPolicy):
             return
         x = ghost_marks[0][2] if ghost_marks else 730
         if victim == "benny":
-            if cue == "music_stopped":
-                draw_text(c, "The music stops... Benny stands still.", w.font_big, COLORS["charge"], WIDTH // 2, 105, center=True)
+            stopped = cue == "music_stopped"
+            w.sounds.carousel_music(playing=not stopped)             # the waltz plays / goes silent
+            draw_music_box(c, w, 470, GROUND_Y + 2, playing=not stopped)
+            if stopped:
+                draw_text(c, "The music box runs down... silence. Benny stands still.", w.font_big,
+                          COLORS["charge"], WIDTH // 2, 105, center=True)
             else:
                 for i in range(3):                                   # motion lines: the ride keeps spinning
                     a = time.time() * 8 + i * 2.1
                     pygame.draw.arc(c, (220, 220, 255), (x - 60, GROUND_Y - 150 + i * 30, 120, 40),
                                     a % 6.28, a % 6.28 + 1.6, 3)
-                draw_text(c, "The carousel music plays on and on...", w.font, COLORS["dim_text"], WIDTH // 2, 105, center=True)
+                draw_text(c, "The music box plays... the carousel spins, Benny with it.", w.font,
+                          COLORS["dim_text"], WIDTH // 2, 105, center=True)
         if victim == "rosa" and cue == "camera_up":
             PW.draw_glow(c, x + 20, GROUND_Y - 80, 70, (255, 255, 220), strength=60)
             draw_text(c, "Rosa lifts her camera...", w.font_big, COLORS["charge"], WIDTH // 2, 105, center=True)
@@ -93,13 +125,14 @@ class StoryPolicy(PW.WindowPolicy):
             draw_text(c, "The lights flicker... Martha grows taller in the dark.", w.font, COLORS["dim_text"],
                       WIDTH // 2, 105, center=True)
         if view.get("stunned"):
-            draw_text(c, "frozen!", w.font_big, (200, 230, 255), x, GROUND_Y - 170, center=True)
+            word = "calm... (for now)" if victim == "henry" else "frozen!"
+            draw_text(c, word, w.font_big, (200, 230, 255), x, GROUND_Y - 170, center=True)
         if view.get("blind"):
             haze = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
             haze.fill((255, 255, 240, 120))
             c.blit(haze, (0, 0))
             draw_text(c, "Blinded by the flash! You can't see!", w.font_big, COLORS["damage"], WIDTH // 2, 140, center=True)
-        if victim == "henry" and int(time.time()) % 4 == 0:
+        if victim == "henry" and not view.get("stunned") and int(time.time()) % 4 == 0:
             PW.draw_bubble(c, w.font_small, "WHO AM I?! SAY MY NAME!", x, 230)
 
     def extra_buttons(self, view, buttons):
@@ -194,6 +227,7 @@ class StoryNarrator(PW.WindowNarrator):
         self.policy.names_known.add(victim)
 
     def after_room(self, state, row):
+        self.window.sounds.end_carousel()
         self.visited.append(row["beat_id"])
         self.room_titles.append(self.story.by_id[row["beat_id"]]["title"])
         self.zone_titles.append(self.story.by_id[row["beat_id"]]["title"])

@@ -34,6 +34,8 @@ class SmartBot(Bot):
         if victim == "ned":
             return "attack" if view["cue"] == "whistle" else "defend"
         if victim == "henry":
+            if view["stunned"]:
+                return "attack"                # calm: hit him while it lasts
             return "call:" + VICTIMS["henry"]["true_name"]
         if victim == "twins":
             return f"attack:{view['targets'].index('real')}"

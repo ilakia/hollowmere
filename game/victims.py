@@ -67,6 +67,7 @@ BLIND_TURNS = 2             # after Rosa's flash: the player's attacks miss
 RIDE_RECOIL = 5             # attacking Benny's spinning carousel throws you off
 NED_FAR_FACTOR = 1 / 3      # hitting Ned while the train is away: a third of the damage
 WRONG_NAME_RAGE = 2         # turns Henry hits 50% harder after a wrong name
+HENRY_CALM_TURNS = 3        # the right name calms Henry for 3 turns (no attacks, double damage), then he shouts again
 MIRROR_HEAL = 10            # hitting Lily's reflection heals Lily ...
 MIRROR_CRACK_HITS = 3       # ... until the mirror cracks after 3 hits and the reflection is gone
 
@@ -157,7 +158,8 @@ def play_victim_room(player, victim_id, help_mode, policy, rng):
                 t["calls"] += 1
                 if victim_id == "henry" and action[5:] == v["true_name"]:
                     used_weakness()
-                    hp["main"] = 0                     # calmed: The Great Henry takes a bow and fades
+                    if stunned == 0:                   # calling again while he is calm does nothing
+                        stunned = HENRY_CALM_TURNS + 1 # +1: counted down at the end of this turn
                 else:
                     t["wrong_calls"] += 1
                     rage = WRONG_NAME_RAGE
