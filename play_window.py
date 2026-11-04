@@ -34,6 +34,7 @@ from game import config as C
 from game.controllers import CONTROLLERS
 from game.engine import play_run
 from game.story import Story
+from game.victims import VICTIMS
 from play import HumanPolicy
 from window.art import (COLORS, HEIGHT, WIDTH, Button, draw_bar, draw_bubble, draw_glow, draw_text, load_sprites,
                         wrap_text)
@@ -216,9 +217,12 @@ class GameWindow:
         self.flashes = Flashes()
         self.sounds = SoundBank(enabled=sound_on and demo_dir is None)
         spoken = ([INTRO_LINE, DEFEND_LINE, HEAL_LINE, REST_OFFER_LINE, REST_LINE, GATE_LINE] +   # most needed first
-                  list(WALT_BUBBLE.values()) + WALT_HITS + TRAVEL_LINES)
+                  list(WALT_BUBBLE.values()) + WALT_HITS + TRAVEL_LINES +
+                  ["Careful, kid. Something's here."] + [v["scripted"] for v in VICTIMS.values()])   # story mode
         self.voice_index = 0             # which of VOICE_OPTIONS Walt speaks with (chosen on the title screen)
         self.player_id = ""              # typed on the title screen (a nickname or code)
+        self.story_night = None          # None = classic game; "A" / "B" / "C" = Study 2 story mode night
+        self.companion = "scripted"      # story mode: silent / scripted (LLM Walt comes in week 2)
         self.save_path = "data/window_runs.csv"
         ghost_spoken = ([REVEAL_LINE, FLASHBACK_INTRO, FLASHBACK_NONE] + list(FLASHBACK_LINES.values()) +
                         [FINALE_START_LINE, FINALE_CHARGE_LINE, FINALE_HURT_LINE, FAREWELL_LINE])
@@ -528,13 +532,19 @@ def title_menu(w, director):
         sound = "off" if w.sounds.muted else "on"
         voice_name = VOICE_OPTIONS[w.voice_index][0]
         player_label = w.player_id or "enter ID"
+        mode_label = "Classic" if w.story_night is None else f"Night {w.story_night}"
+        if w.story_night is None:
+            second = Button("director", f"Director: {WINDOW_DIRECTORS[index]}  < >", (305, 410, 240, 50),
+                            [pygame.K_LEFT, pygame.K_RIGHT])
+        else:
+            second = Button("companion", f"Walt: {w.companion}  < >", (305, 410, 240, 50), [pygame.K_LEFT, pygame.K_RIGHT])
         buttons = [Button("start", "Start  [Space]", (90, 410, 200, 50), [pygame.K_SPACE, pygame.K_RETURN]),
                    Button("player", f"Player: {player_label}  [I]", (240, 470, 240, 40), [pygame.K_i]),
-                   Button("director", f"Director: {WINDOW_DIRECTORS[index]}  < >", (305, 410, 240, 50),
-                          [pygame.K_LEFT, pygame.K_RIGHT]),
+                   Button("mode", f"Mode: {mode_label}  [G]", (735, 470, 210, 40), [pygame.K_g]),
+                   second,
                    Button("voice", f"Walt's voice: {voice_name}  [V]", (560, 410, 230, 50), [pygame.K_v]),
                    Button("sound", f"Sound: {sound} [S]", (805, 410, 140, 50), [pygame.K_s]),
-                   Button("quit", "Quit  [Esc]", (500, 470, 220, 40), [pygame.K_ESCAPE])]
+                   Button("quit", "Quit  [Esc]", (490, 470, 220, 40), [pygame.K_ESCAPE])]
         choice = w.wait_for(draw_scene, buttons)
         if choice == "voice":                     # next voice, and Walt says hello in it straight away
             w.voice_index = (w.voice_index + 1) % len(VOICE_OPTIONS)
@@ -543,6 +553,12 @@ def title_menu(w, director):
             w.voice.preview(voice, INTRO_LINE)
         if choice == "player":
             w.player_id = ask_player_id(w, w.player_id)
+        if choice == "mode":                      # Classic -> Night A -> Night B -> Night C -> Classic
+            modes = [None, "A", "B", "C"]
+            w.story_night = modes[(modes.index(w.story_night) + 1) % len(modes)]
+        if choice == "companion":
+            from window.story_window import COMPANIONS
+            w.companion = COMPANIONS[(COMPANIONS.index(w.companion) + 1) % len(COMPANIONS)]
         if choice == "start":
             if not w.player_id and w.demo_dir is None:
                 w.player_id = ask_player_id(w, w.player_id) or "GUEST"
@@ -841,7 +857,7 @@ class WindowPolicy(HumanPolicy):
     def choose_action(self, view, rng):
         w = self.window
         self.show_what_happened(view)
-        ghosts = view["enemies"]                       # only the ghosts still alive
+        ghosts = self.display_ghosts(view)             # only the ghosts still alive
         hp_mult = C.DIFFICULTY[w.difficulty]["hp_mult"]
         charging = view["wind_up"]
         if charging and not self.previous_wind_up:
@@ -938,12 +954,13 @@ class WindowPolicy(HumanPolicy):
                 if glowing:                       # in the finale the "!" sits left of Walt's speech bubble
                     mark_x = x - 110 if w.is_finale else x
                     draw_text(c, "!", w.font_mark, COLORS["charge"], mark_x, GROUND_Y - 175, center=True)
-                full_hp = C.ENEMY_TYPES[kind]["hp"] * hp_mult
+                full_hp = self.full_hp(kind, view, hp_mult)
                 draw_bar(c, x - 40, GROUND_Y + 12, 80, 10, hp / full_hp)
-                draw_text(c, kind, w.font_small, COLORS["dim_text"], x, GROUND_Y + 34, center=True)
-            if charging and not view["warning"]:            # no Walt warning: only the glow and this line
+                draw_text(c, self.ghost_label(kind), w.font_small, COLORS["dim_text"], x, GROUND_Y + 34, center=True)
+            if charging and not view["warning"] and not view.get("victim"):   # (victims show their own tells)
                 draw_text(c, "Something is glowing brighter and brighter...", w.font_big,
                           COLORS["charge"], WIDTH // 2, 105, center=True)
+            self.draw_cues(c, view, ghost_marks)
             w.particles.draw(c, dt)
             w.draw_popups(c)
 
@@ -962,6 +979,7 @@ class WindowPolicy(HumanPolicy):
                        Button("defend", "D  Defend", (380, 470, 200, 50), [pygame.K_d],
                               flashing=charging and view["warning"]),          # only Walt's hint flashes it
                        Button("potion", "P  Potion", (610, 470, 200, 50), [pygame.K_p])]
+        buttons = self.extra_buttons(view, buttons)
         if w.demo_dir is not None:      # demo player: rest when offered, defend on a glow, potion when low
             if rest_allowed:
                 w.demo_choice = "rest"
@@ -972,10 +990,11 @@ class WindowPolicy(HumanPolicy):
             else:
                 w.demo_choice = "attack"
         action = w.wait_for(draw_scene, buttons)
+        action = self.resolve_action(action, draw_scene, view)
         if action == "rest":
             self.rest_used = True
             self.rest_scene(draw_scene)
-        if action == "attack":
+        if action.startswith("attack"):
             score = self.timing_bar(draw_scene)
             self.accuracy = TIMING_BASE + TIMING_RANGE * score
             self.room_timing.append(score)
@@ -983,6 +1002,27 @@ class WindowPolicy(HumanPolicy):
         self.last_action = action
         self.previous_hp = view["hp"]
         self.previous_ghosts = list(ghosts)
+        return action
+
+    # ---- hooks: the normal game uses these defaults; the story mode (window/story_window.py) overrides them
+    def display_ghosts(self, view):
+        """The ghosts to draw, as (kind, hp)."""
+        return view["enemies"]
+
+    def full_hp(self, kind, view, hp_mult):
+        return C.ENEMY_TYPES[kind]["hp"] * hp_mult
+
+    def ghost_label(self, kind):
+        return kind
+
+    def draw_cues(self, c, view, ghost_marks):
+        """Extra signs on screen (story mode: the music stops, the camera goes up...)."""
+
+    def extra_buttons(self, view, buttons):
+        return buttons
+
+    def resolve_action(self, action, draw_scene, view):
+        """Turn a button into the engine's action (story mode: pick a target or a name)."""
         return action
 
     def rest_scene(self, draw_scene):
@@ -1063,7 +1103,7 @@ class WindowPolicy(HumanPolicy):
             w.particles.rise(170, GROUND_Y - 60, COLORS["heal"])
             w.speak(HEAL_LINE)
             w.sounds.play("heal")
-        self.show_ghost_hits(view["enemies"])
+        self.show_ghost_hits(self.display_ghosts(view))
 
     def show_ghost_hits(self, ghosts):
         """Effects over the ghosts: the damage you (and Walt, in fight mode) did last turn."""
@@ -1221,6 +1261,11 @@ def play_one_game(window, story, args):
         ("You wake up inside Hollowmere Park. The gates are locked.", COLORS["text"]),
         ("An old mechanic with a flashlight finds you. 'Name's Walt. Stick with me, I know the way out.'",
          COLORS["flashlight"])], button_label="Follow Walt  [Space]")
+    if window.story_night is not None:        # Study 2: a story-mode night
+        from window.story_window import play_story_night
+        window.director_name = "Night of the Fire"      # the Walt version stays hidden (blind playtest)
+        rows, seed = play_story_night(window, story, window.story_night, window.companion)
+        return rows, f"story-{window.companion}", seed
     seed = random.randrange(10**6)
     policy = WindowPolicy(window)
     controller = WindowNarrator(CONTROLLERS[director](rng=random.Random(seed)), story, window, policy)
@@ -1235,6 +1280,8 @@ def main():
     ap.add_argument("--out", default="data/window_runs.csv")
     ap.add_argument("--no-sound", action="store_true")
     ap.add_argument("--windowed", action="store_true", help="start in a window instead of full screen")
+    ap.add_argument("--night", choices=["A", "B", "C"], default=None, help="start in story mode (Study 2) on this night")
+    ap.add_argument("--companion", choices=["silent", "scripted"], default="scripted", help="story mode: which Walt")
     ap.add_argument("--demo", default=None, help="folder for screenshots: plays by itself, saves no game")
     args = ap.parse_args()
     if args.demo is not None:
@@ -1244,6 +1291,8 @@ def main():
     window = GameWindow(args.controller, demo_dir=args.demo, sound_on=not args.no_sound,
                         fullscreen=not args.windowed)
     window.save_path = args.out
+    window.story_night = args.night
+    window.companion = args.companion
     window.sounds.start_music()
     while True:
         try:
@@ -1253,14 +1302,19 @@ def main():
         outcome = rows[-1]["run_outcome"]
         if args.demo is None:              # save first, so quitting on the end screen keeps the game
             player_id = window.player_id or "GUEST"
+            out = args.out if window.story_night is None else "data/story_runs.csv"     # Study 2 kept apart
             games_before, knew_twist = player_history(player_id, args.out)
             for r in rows:
                 r.update({"run_id": f"window-{player_id}-{seed}", "controller": director,
                           "bot_type": "human", "player_id": player_id,
                           "game_number": games_before + 1,      # 1 = first game of this player
                           "knew_twist": knew_twist})            # True = they had already seen Walt's reveal
-            save_game(rows, args.out)
-            print(f"Game saved to {args.out}")
+            if window.story_night is not None:
+                story_before = player_history(player_id, out)[0]
+                for r in rows:
+                    r["story_game_number"] = story_before + 1
+            save_game(rows, out)
+            print(f"Game saved to {out}")
         window.sounds.play("win" if outcome == "escaped" else "death")
         ending_scene(window, outcome)
         window.room_label = "The end"

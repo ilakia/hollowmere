@@ -121,8 +121,9 @@ def play_victim_room(player, victim_id, help_mode, policy, rng):
             view = {"hp": player.hp, "max_hp": C.PLAYER_MAX_HP, "potions": player.potions,
                     "victim": victim_id, "victim_hp": hp["main"], "victim_max_hp": v["hp"], "cue": cue,
                     "blind": blind > 0, "stunned": stunned > 0, "targets": targets, "help_mode": help_mode,
-                    # cues that look like a charge-up: players' habit (defend) is NOT the weakness here
-                    "wind_up": cue in ("camera_up", "whistle"), "warning": help_mode == "hint",
+                    # cues that look like a charge-up: players' habit (defend) is NOT the weakness here.
+                    # warning False: Walt's generic "it's glowing, DEFEND!" would be wrong advice for victims
+                    "wind_up": cue in ("camera_up", "whistle"), "warning": False,
                     "enemies": [(victim_id, hp["main"])]}
             action = policy.choose_action(view, rng)
             defending = False

@@ -1,0 +1,237 @@
+"""
+Study 2 in the game window: the story mode "Night of the Fire".
+
+It reuses the normal window (walking, fights, voice, flashback) and only adds what is new:
+- the victims on screen (names only once Walt has said who they are),
+- their tells (the music stops, the camera goes up, the ghost train passes, the lights flicker),
+- the story-mode actions: L Shine (flashlight), N Call a name, and choosing which twin to hit,
+- Walt's words about each victim: silent Walt says nothing useful, scripted Walt tells the backstory.
+The rules of the fights are in game/victims.py; the night itself in game/story_mode.py.
+"""
+import math
+import time
+
+import pygame
+
+import play_window as PW
+from game import config as C
+from game.story_mode import ScriptedBrain, SilentBrain, play_night
+from game.victims import NIGHTS, VICTIMS
+from window.art import COLORS, HEIGHT, WIDTH, Button, draw_text
+
+GROUND_Y = PW.GROUND_Y
+VICTIM_SPRITE = {"martha": "martha", "benny": "benny", "rosa": "rosa", "henry": "henry", "twins": "lily",
+                 "ned": "ned"}
+SPRITE_VICTIM = {"martha": "martha", "benny": "benny", "rosa": "rosa", "henry": "henry", "lily": "twins",
+                 "lily_reflection": "twins", "ned": "ned"}
+SILENT_LINE = "Careful, kid. Something's here."
+BRAINS = {"silent": SilentBrain, "scripted": ScriptedBrain}
+
+
+class StoryPolicy(PW.WindowPolicy):
+    """The human player in story mode: the normal fight screen plus the victims' tells and actions."""
+
+    def __init__(self, window, names_known):
+        super().__init__(window)
+        self.names_known = names_known      # victims whose names Walt has told (so the label can show them)
+
+    def display_ghosts(self, view):
+        if not view.get("victim"):
+            return view["enemies"]
+        if view.get("targets"):              # Lily and her reflection
+            return [("lily" if side == "real" else "lily_reflection",
+                     view["victim_hp"] if side == "real" else view["victim_max_hp"]) for side in view["targets"]]
+        return [(VICTIM_SPRITE[view["victim"]], view["victim_hp"])]
+
+    def full_hp(self, kind, view, hp_mult):
+        if view.get("victim"):
+            return view["victim_max_hp"]
+        return super().full_hp(kind, view, hp_mult)
+
+    def ghost_label(self, kind):
+        victim = SPRITE_VICTIM.get(kind)
+        if victim is None:
+            return kind
+        if victim in self.names_known:
+            return VICTIMS[victim]["name"].split()[0]
+        return "???"
+
+    def draw_cues(self, c, view, ghost_marks):
+        """The tells: what a watchful player can see this turn."""
+        w = self.window
+        cue = view.get("cue")
+        victim = view.get("victim")
+        if not victim:
+            return
+        x = ghost_marks[0][2] if ghost_marks else 730
+        if victim == "benny":
+            if cue == "music_stopped":
+                draw_text(c, "The music stops... Benny stands still.", w.font_big, COLORS["charge"], WIDTH // 2, 105, center=True)
+            else:
+                for i in range(3):                                   # motion lines: the ride keeps spinning
+                    a = time.time() * 8 + i * 2.1
+                    pygame.draw.arc(c, (220, 220, 255), (x - 60, GROUND_Y - 150 + i * 30, 120, 40),
+                                    a % 6.28, a % 6.28 + 1.6, 3)
+                draw_text(c, "The carousel music plays on and on...", w.font, COLORS["dim_text"], WIDTH // 2, 105, center=True)
+        if victim == "rosa" and cue == "camera_up":
+            PW.draw_glow(c, x + 20, GROUND_Y - 80, 70, (255, 255, 220), strength=60)
+            draw_text(c, "Rosa lifts her camera...", w.font_big, COLORS["charge"], WIDTH // 2, 105, center=True)
+        if victim == "ned" and cue == "whistle":
+            speed = (time.time() * 900) % (WIDTH + 400)              # the ghost train rushes past
+            train_x = int(speed) - 300
+            for car in range(4):
+                car_x = train_x - car * 110
+                pygame.draw.rect(c, (150, 25, 40), (car_x, GROUND_Y - 60, 100, 46), border_radius=8)
+                pygame.draw.circle(c, (90, 90, 100), (car_x + 20, GROUND_Y - 12), 10)
+                pygame.draw.circle(c, (90, 90, 100), (car_x + 80, GROUND_Y - 12), 10)
+            draw_text(c, "WHOOO! The ghost train comes past, Ned at the front!", w.font_big, COLORS["charge"],
+                      WIDTH // 2, 105, center=True)
+        if victim == "martha" and cue == "lights_flicker":
+            dim = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            dim.fill((0, 0, 0, 90 if int(time.time() * 10) % 2 else 30))
+            c.blit(dim, (0, 0))
+            draw_text(c, "The lights flicker... Martha grows taller in the dark.", w.font, COLORS["dim_text"],
+                      WIDTH // 2, 105, center=True)
+        if view.get("stunned"):
+            draw_text(c, "frozen!", w.font_big, (200, 230, 255), x, GROUND_Y - 170, center=True)
+        if view.get("blind"):
+            haze = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            haze.fill((255, 255, 240, 120))
+            c.blit(haze, (0, 0))
+            draw_text(c, "Blinded by the flash! You can't see!", w.font_big, COLORS["damage"], WIDTH // 2, 140, center=True)
+        if victim == "henry" and int(time.time()) % 4 == 0:
+            PW.draw_bubble(c, w.font_small, "WHO AM I?! SAY MY NAME!", x, 230)
+
+    def extra_buttons(self, view, buttons):
+        """Victim rooms get two more buttons: L Shine and N Call a name (same row, a bit narrower)."""
+        if not view.get("victim"):
+            return buttons
+        names = {b.name: b for b in buttons}
+        row = [names["attack"], names["defend"], names["potion"],
+               Button("shine", "L  Shine", (0, 0, 1, 1), [pygame.K_l]),
+               Button("call", "N  Call name", (0, 0, 1, 1), [pygame.K_n])]
+        if "rest" in names:
+            row.append(names["rest"])
+        width = (WIDTH - 20 - 8 * (len(row) - 1)) // len(row)
+        for i, button in enumerate(row):
+            button.rect = pygame.Rect(10 + i * (width + 8), 470, width, 50)
+        return row
+
+    def resolve_action(self, action, draw_scene, view):
+        w = self.window
+        if action == "call":
+            choices = VICTIMS["henry"]["name_choices"]
+            buttons = [Button(f"call:{name}", f"{i + 1}  {name}", (110 + i * 250, 300, 240, 50), [pygame.K_1 + i])
+                       for i, name in enumerate(choices)]
+
+            def ask(dt):
+                draw_scene(dt)
+                draw_text(w.canvas, "Call out a name:", w.font_big, COLORS["text"], WIDTH // 2, 260, center=True)
+            if w.demo_dir is not None:
+                w.demo_choice = buttons[0].name
+            return w.wait_for(ask, buttons)
+        if action == "attack" and view.get("targets") and len(view["targets"]) > 1:
+            buttons = [Button(f"attack:{i}", f"{i + 1}  this one", (PW.ghost_x(i, 2) - 80, 300, 160, 46), [pygame.K_1 + i])
+                       for i in range(2)]
+
+            def ask(dt):
+                draw_scene(dt)
+                draw_text(w.canvas, "Which Lily do you strike?", w.font_big, COLORS["text"], WIDTH // 2, 250, center=True)
+            if w.demo_dir is not None:
+                w.demo_choice = buttons[0].name
+            return w.wait_for(ask, buttons)
+        return action
+
+
+class StoryNarrator(PW.WindowNarrator):
+    """Shows a story-mode night: zone cards, walking, the victims appearing, Walt's words, the result."""
+
+    def __init__(self, story, window, policy, brain_name, night):
+        super().__init__(None, story, window, policy)
+        self.brain_name = brain_name
+        self.night = night
+        self.room_titles = []
+
+    def before_room(self, state, info):
+        w = self.window
+        beat = self.story.get(info["beat_id"])
+        zone = C.ZONE_NAMES[state["zone"]]
+        w.room_label = f"Night {self.night}  ·  Room {state['room_index'] + 1}/{state['rooms']}  ·  {zone}"
+        w.is_finale = state["is_finale"]
+        w.zone = state["zone"]
+        w.help_mode = None if state["is_finale"] else state["help_mode"]
+        w.difficulty = "normal"
+        if state["zone"] != self.zone_seen:
+            self.zone_card(state, beat)
+            self.zone_seen = state["zone"]
+            self.zone_titles = []
+            w.scenery.world_x = 0.0
+        shown = dict(beat)
+        victim = info["victim"]
+        if victim == "twins":
+            shown["enemies"] = ["lily", "lily_reflection"]
+        elif victim:
+            shown["enemies"] = [VICTIM_SPRITE[victim]]
+        self.walk_and_meet(state, shown)
+        if state["is_finale"]:
+            self.flashback()
+            w.bubble = ""
+            w.speak(PW.FINALE_START_LINE, ghost=True)
+        elif victim:
+            self.tell_about(victim)
+        else:
+            w.bubble = PW.WALT_BUBBLE.get(w.help_mode, "")
+
+    def tell_about(self, victim):
+        """What Walt says when a victim appears. Silent Walt: nothing useful. Scripted Walt: the backstory
+        with the clue (and from now on the victim's name is shown)."""
+        w = self.window
+        w.bubble = ""
+        if self.brain_name == "silent":
+            w.speak(SILENT_LINE)
+            return
+        w.speak(VICTIMS[victim]["scripted"])
+        self.policy.names_known.add(victim)
+
+    def after_room(self, state, row):
+        self.visited.append(row["beat_id"])
+        self.room_titles.append(self.story.by_id[row["beat_id"]]["title"])
+        self.zone_titles.append(self.story.by_id[row["beat_id"]]["title"])
+        row["timing_score"] = self.policy.take_room_timing()
+        band = row["band"]
+        result = "cleared" if row["cleared"] else "not cleared"
+        self.last_result = (f"{result}, HP lost {row['hp_lost_ratio']:.0%}, {PW.BAND_TEXT[band]}", band)
+        self.window.sounds.play("win" if band == "in_band" else "click")
+
+    def draw_track(self, c, state, beat, walked):
+        """Progress through the night (7 rooms): rooms played, this room, '?' for the rest."""
+        w = self.window
+        count = state["rooms"]
+        index = state["room_index"]
+        track = pygame.Rect(180, 500, 600, 8)
+        start = max(0.0, index - 0.5)                            # walking from the last room to this one
+        end = index + 0.5
+        share = (start + (end - start) * walked / PW.WALK_DISTANCE) / count
+        pygame.draw.rect(c, COLORS["bar_back"], track, border_radius=4)
+        pygame.draw.rect(c, COLORS["flashlight"], (track.x, track.y, int(track.width * share), 8), border_radius=4)
+        for i in range(count):
+            x = track.x + int(track.width * (i + 0.5) / count)
+            pygame.draw.circle(c, COLORS["charge"] if i == index else COLORS["text"], (x, track.centery), 6)
+        draw_text(c, f"Night {self.night}: room {index + 1} of {count}", w.font_small, COLORS["dim_text"],
+                  track.centerx, track.y + 22, center=True)
+
+
+def play_story_night(window, story, night, brain_name):
+    """Play one story-mode night in the window. Output: the room rows."""
+    names_known = set()
+    policy = StoryPolicy(window, names_known)
+    narrator = StoryNarrator(story, window, policy, brain_name, night)
+    brain = BRAINS[brain_name]()
+    seed = int(time.time()) % 1000000
+    rows = play_night(night, brain, policy, seed, narrator=narrator)
+    window.last_result = narrator.last_result
+    return rows, seed
+
+
+NIGHT_CHOICES = list(NIGHTS)
+COMPANIONS = list(BRAINS)

@@ -21,6 +21,10 @@ python play.py --controller rule            # play it yourself in the terminal (
 python play_window.py                       # game window: walk through the park (hold RIGHT), fight the ghosts that appear
 python robustness_experiment.py --games 300 # held-out bot type and +/-20% sensitivity check
 
+# Study 2 (story mode "Night of the Fire", see STUDY2.md)
+python story_check.py --games 300           # balance check of the six victim ghosts (naive vs smart bots)
+python play_window.py --night A --companion scripted   # or pick Mode / Walt on the title screen (G, < >)
+
 # LLM directors need Ollama: brew install ollama && brew services start ollama && ollama pull llama3.2:3b
 python llm_experiment.py --games 25 --batch 2 --pause 180                     # plain LLM director
 python llm_experiment.py --controller llm_risk --games 25 --batch 2 --pause 180   # LLM + predicted risks

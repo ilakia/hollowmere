@@ -133,7 +133,134 @@ WRAITH = [
     "...p...p..",
 ]
 
-SPRITES = {"player": PLAYER, "walt": WALT, "wisp": WISP, "animatronic": ANIMATRONIC, "wraith": WRAITH}
+# ---- Study 2: the victims of the 1987 fire (drawn as people, shown pale and ghostly in the game)
+PALETTE.update({
+    "G": (200, 200, 205),   # grey hair
+    "a": (120, 80, 140),    # cardigan
+    "A": (70, 60, 90),      # skirt
+    "U": (230, 210, 120),   # buttons / brass
+    "L": (60, 55, 70),      # legs / trousers
+    "q": (40, 40, 50),      # glasses frame / camera body
+    "Q": (170, 200, 230),   # camera lens
+    "r": (210, 40, 50),     # red (ribbon, neckerchief, stripes)
+    "x": (240, 235, 225),   # white (stripes, collar)
+    "z": (40, 70, 140),     # overalls / denim
+    "D": (220, 190, 110),   # straw hat
+    "V": (80, 50, 40),      # waistcoat
+    "M": (60, 40, 30),      # moustache / beret
+    "Z": (250, 200, 210),   # dress
+})
+
+MARTHA = [
+    "....GGGG....",
+    "...GGGGGG...",
+    "...GssssG...",
+    "...qsqqsq...",
+    "...ssssss...",
+    "....ssss....",
+    "..aaaaaaaa..",
+    ".aaaaaaaaaa.",
+    ".aaUaaaaUaa.",
+    ".aa.aaaa.aa.",
+    ".ss.AAAA.ss.",
+    "....AAAA....",
+    "...AAAAAA...",
+    "....LL.LL...",
+    "...dd...dd..",
+]
+
+BENNY = [
+    "...cccccc...",
+    "..cccccccc..",
+    "...ssssss...",
+    "...sesses...",
+    "...sMMMMs...",
+    "....ssss....",
+    "..xVVxxVVx..",
+    ".xxVVxxVVxx.",
+    ".xxVVUUVVxx.",
+    ".ss.VVVV.ss.",
+    "....LLLL....",
+    "....LL.LL...",
+    "....LL.LL...",
+    "...dd...dd..",
+]
+
+ROSA = [
+    "...MMMMM....",
+    "..MMMMMMM...",
+    "...hssssh...",
+    "...hsesse...",
+    "...hssssh...",
+    "....ssss....",
+    "..rrrrrrrr..",
+    ".rrqqqqqrrr.",
+    ".rrqQQqqrrr.",
+    ".ssqqqqqrss.",
+    "....AAAA....",
+    "...AAAAAA...",
+    "....LL.LL...",
+    "...dd...dd..",
+]
+
+HENRY = [
+    "..DDDDDDDD..",
+    ".DDDDDDDDDD.",
+    "...ssssss...",
+    "...sesses...",
+    "...sMMMMs...",
+    "....ssss....",
+    "..rxrxrxrx..",
+    ".rxrxrxrxrx.",
+    ".rxrxUUrxrx.",
+    ".ss.rxrx.ssk",
+    "....LLLL...k",
+    "....LL.LL..k",
+    "....LL.LL..k",
+    "...dd...dd.k",
+]
+
+LILY = [
+    "...hhhhh.rr.",
+    "..hhhhhhhrr.",
+    "..hssssshh..",
+    "...sesses...",
+    "...ssssss...",
+    "....ssss....",
+    "...ZZZZZZ...",
+    "..ZZZZZZZZ..",
+    ".sZZZZZZZZs.",
+    "..ZZZZZZZZ..",
+    ".ZZZZZZZZZZ.",
+    "....s..s....",
+    "....s..s....",
+    "...dd..dd...",
+]
+
+LILY_REFLECTION = [row.replace("r", ".") for row in LILY]     # the reflection has no red ribbon
+
+NED = [
+    "...zxzxzx...",
+    "..zxzxzxzx..",
+    "...ssssss...",
+    "...sesses...",
+    "...sGGGGs...",
+    "....rrrr....",
+    "..zzzzzzzz..",
+    ".zzzUzzUzzz.",
+    ".zzzzzzzzzz.",
+    ".ss.zzzz.ss.",
+    "....zzzz....",
+    "....zz.zz...",
+    "....zz.zz...",
+    "...dd...dd..",
+]
+
+VICTIM_SPRITES = {"martha": MARTHA, "benny": BENNY, "rosa": ROSA, "henry": HENRY, "lily": LILY,
+                  "lily_reflection": LILY_REFLECTION, "ned": NED}
+
+SPRITES = {"player": PLAYER, "walt": WALT, "wisp": WISP, "animatronic": ANIMATRONIC, "wraith": WRAITH,
+           **VICTIM_SPRITES}
 for _name, _rows in SPRITES.items():                  # catch typing mistakes in the pixel rows early
     assert len(set(len(r) for r in _rows)) == 1, f"sprite {_name}: rows have different lengths"
 
@@ -166,10 +293,20 @@ def ghostly(color):
     return (min(255, r // 2 + 70), min(255, g // 2 + 140), min(255, b // 2 + 110))
 
 
+def victim_ghostly(color):
+    """Victims keep their colours, but washed out and pale blue, like a fading photograph."""
+    r, g, b = color
+    return (min(255, int(r * 0.45 + 120)), min(255, int(g * 0.45 + 135)), min(255, int(b * 0.45 + 150)))
+
+
 def load_sprites():
     """All sprite images plus their white hit-flash and light-outline versions.
     Output: dict name -> (image, flash, outline)."""
-    images = {name: make_sprite(rows) for name, rows in SPRITES.items()}
+    images = {name: make_sprite(rows) for name, rows in SPRITES.items() if name not in VICTIM_SPRITES}
+    for name, rows in VICTIM_SPRITES.items():
+        images[name] = make_sprite(rows, victim_ghostly)
+    # the real Lily's red ribbon stays bright red: it is the clue that tells her from her reflection
+    images["lily"] = make_sprite(LILY, lambda col: col if col == PALETTE["r"] else victim_ghostly(col))
     images["walt_ghost"] = make_sprite(WALT, ghostly)
     sprites = {}
     for name, img in images.items():
