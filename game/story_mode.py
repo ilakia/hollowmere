@@ -34,6 +34,8 @@ LLM_SHORTLIST = 6              # same shortlist size as llm_risk in Study 1
 # Hint ladder (part 2). Levels: 0 nothing, 1 the life story, 2 a clearer nudge, 3 exactly what to do.
 SCRIPTED_HINT_TURNS = {2: 4, 3: 7}      # scripted Walt: level 2 from turn 4, level 3 from turn 7 (if still not found)
 LLM_HINT_CHECKS = (3, 5, 7, 9)          # LLM Walt decides at these turns (at most 4 calls per fight: laptop heat)
+SILENT_HELP_LINE = "..."                 # silent Walt only shrugs when asked for help
+HELP_ASKED_NOTE = "The player just pressed the 'Walt, help!' button: they are asking you for help right now."
 
 
 class SilentCoach:
@@ -47,6 +49,9 @@ class SilentCoach:
 
     def step(self, fight):
         return self.level, None
+
+    def ask_help(self, fight):
+        return self.level, SILENT_HELP_LINE
 
 
 class ScriptedCoach:
@@ -67,6 +72,13 @@ class ScriptedCoach:
                 self.level = level
                 return level, self.victim[f"hint{level}"]
         return self.level, None
+
+    def ask_help(self, fight):
+        """"Walt, help!": one level up the ladder (fixed lines). At level 3 he repeats the exact move."""
+        if fight["weakness_used"]:
+            return self.level, "You've got it, kid. Keep doing that."
+        self.level = min(3, max(2, self.level + 1))
+        return self.level, self.victim[f"hint{self.level}"]
 
 
 class LLMCoach(ScriptedCoach):
@@ -104,6 +116,21 @@ class LLMCoach(ScriptedCoach):
         if say is None and level > self.level:             # went up but the sentence failed the check
             self.fallbacks += 1
             say = self.victim[f"hint{level}"]
+        self.level = level
+        return level, say
+
+    def ask_help(self, fight):
+        """"Walt, help!": the model decides how much to reveal, knowing that the player asked. Invalid
+        answers fall back to scripted Walt's next level."""
+        if fight["weakness_used"]:
+            return self.level, "You've got it, kid. Keep doing that."
+        prompt = hint_prompt(self.victim, fight, self.level, self.memory) + "\n" + HELP_ASKED_NOTE
+        answer = self.think(lambda: self.client.ask(prompt, HINT_SYSTEM_PROMPT, tag="|walt_help"))
+        self.client.save_cache()
+        level, say = check_hint(answer, self.level, self.victim)
+        if level is None or say is None:
+            self.fallbacks += 1
+            return ScriptedCoach.ask_help(self, fight)
         self.level = level
         return level, say
 
@@ -264,6 +291,8 @@ def play_night(night, brain, policy, seed, narrator=None):
                  "is_finale": is_finale, "victim": info["victim"], "beat_id": info["beat_id"],
                  "hp": player.hp, "max_hp": C.PLAYER_MAX_HP, "potions": player.potions,
                  "deaths_total": player.deaths_total, "history": history}
+        client = getattr(brain, "client", None)                        # LLM Walt only: count model time
+        calls_before = (client.calls, client.cache_hits, client.seconds) if client else None
         if narrator is not None and hasattr(narrator, "think"):
             decision = narrator.think(lambda: brain.decide(state))     # the window keeps moving meanwhile
         else:
@@ -294,6 +323,10 @@ def play_night(night, brain, policy, seed, narrator=None):
                "walt_say": decision.get("say"), **t,
                "hp_lost_ratio": round(hp_lost_ratio(t), 4), "band": band_position(t)}
         row["in_band"] = row["band"] == "in_band"
+        if client:                                                     # model calls in this room (decision + hints)
+            row["llm_calls"] = client.calls - calls_before[0]
+            row["llm_cache_hits"] = client.cache_hits - calls_before[1]
+            row["llm_seconds"] = round(client.seconds - calls_before[2], 2)
         history.append(row)
         brain.observe(state, row)
         if narrator is not None:

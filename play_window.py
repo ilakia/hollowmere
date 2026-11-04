@@ -46,6 +46,7 @@ from window.setpieces import draw_set_piece
 from window.pieces_z3 import draw_big_gate
 from window.sound import SoundBank
 from game.chapters import NIGHT_STORY
+from game.playtest import next_assignment, nights_played
 from game.chapters import all_lines as chapter_lines
 from window.voice import VOICE_OPTIONS, WaltVoice
 
@@ -232,7 +233,8 @@ class GameWindow:
         self.player_id = ""              # typed on the title screen (a nickname or code)
         self.story_night = None          # None = classic game; "A" / "B" / "C" = Study 2 story mode night
         self.next_night_now = False      # True = the player chose "...or maybe not?": next night, no title
-        self.companion = "scripted"      # story mode: silent / scripted (LLM Walt comes in week 2)
+        self.companion = "scripted"      # story mode: silent / scripted / llm
+        self.playtest = False            # Study 2 playtest: night and Walt come from the player ID, hidden
         self.save_path = "data/window_runs.csv"
         ghost_spoken = ([REVEAL_LINE, FLASHBACK_INTRO, FLASHBACK_NONE] + list(FLASHBACK_LINES.values()) +
                         [FINALE_START_LINE, FINALE_CHARGE_LINE, FINALE_HURT_LINE, FAREWELL_LINE])
@@ -560,7 +562,14 @@ def title_menu(w, director):
                   w.font, COLORS["dim_text"], WIDTH // 2, 175, center=True)
         draw_text(w.canvas, "A attack (stop the timing bar with Space)   ·   D defend when a ghost glows   ·   "
                   "P potion   ·   M mute   ·   F full screen", w.font_small, COLORS["dim_text"], WIDTH // 2, 365, center=True)
-        if w.player_id:
+        if w.playtest:
+            done = nights_played(w.player_id) if w.player_id else 0
+            text = (f"Playtest  ·  player {w.player_id}  ·  night {min(done + 1, 3)} of 3" if w.player_id
+                    else "Playtest  ·  enter your player ID (for example P07) with I")
+            if done >= 3:
+                text = f"Playtest  ·  player {w.player_id} has finished all three nights. Thank you!"
+            draw_text(w.canvas, text, w.font_small, COLORS["flashlight"], WIDTH // 2, 385, center=True)
+        elif w.player_id:
             games, knows = player_history(w.player_id, w.save_path)
             if games:
                 secret = "  ·  you already know Walt's secret" if knows else ""
@@ -578,9 +587,10 @@ def title_menu(w, director):
         else:
             second = Button("companion", f"Walt: {w.companion}  < >", (305, 410, 240, 50), [pygame.K_LEFT, pygame.K_RIGHT])
         buttons = [Button("start", "Start  [Space]", (90, 410, 200, 50), [pygame.K_SPACE, pygame.K_RETURN]),
-                   Button("player", f"Player: {player_label}  [I]", (240, 470, 240, 40), [pygame.K_i]),
-                   Button("mode", f"Mode: {mode_label}  [G]", (735, 470, 210, 40), [pygame.K_g]),
-                   second,
+                   Button("player", f"Player: {player_label}  [I]", (240, 470, 240, 40), [pygame.K_i])]
+        if not w.playtest:                        # playtest: the night and Walt's version are not chosen here
+            buttons += [Button("mode", f"Mode: {mode_label}  [G]", (735, 470, 210, 40), [pygame.K_g]), second]
+        buttons += [
                    Button("voice", f"Walt's voice: {voice_name}  [V]", (560, 410, 230, 50), [pygame.K_v]),
                    Button("sound", f"Sound: {sound} [S]", (805, 410, 140, 50), [pygame.K_s]),
                    Button("quit", "Quit  [Esc]", (490, 470, 220, 40), [pygame.K_ESCAPE])]
@@ -1070,6 +1080,9 @@ class WindowPolicy(HumanPolicy):
             else:
                 w.demo_choice = "attack"
         action = w.wait_for(draw_scene, buttons)
+        while action == "help":                           # "Walt, help!" costs no turn: Walt answers, then choose
+            self.on_help(view)
+            action = w.wait_for(draw_scene, buttons)
         action = self.resolve_action(action, draw_scene, view)
         if action == "rest":
             self.rest_used = True
@@ -1100,6 +1113,9 @@ class WindowPolicy(HumanPolicy):
 
     def extra_buttons(self, view, buttons):
         return buttons
+
+    def on_help(self, view):
+        """The player pressed "Walt, help!" (story mode only, see window/story_window.py)."""
 
     def resolve_action(self, action, draw_scene, view):
         """Turn a button into the engine's action (story mode: pick a target or a name)."""
@@ -1354,6 +1370,14 @@ def play_one_game(window, story, args):
         director = window.director_name
     else:
         director = title_menu(window, window.director_name)
+    if window.playtest:                       # Study 2: the rotation decides, the player never sees the version
+        night, companion = next_assignment(window.player_id)
+        if night is None:
+            window.card("Thank you!", [(f"Player {window.player_id} has played all three nights.", COLORS["text"]),
+                                       ("Please tell the researcher you are done.", COLORS["flashlight"])],
+                        button_label="Back to the menu  [Space]")
+            raise RestartGame
+        window.story_night, window.companion = night, companion
     start_llm_warm_up(window)
     if window.story_night is not None:
         window.director_name = "Night of the Fire"      # the Walt version stays hidden (blind playtest)
@@ -1395,6 +1419,8 @@ def main():
     ap.add_argument("--night", choices=["A", "B", "C"], default=None, help="start in story mode (Study 2) on this night")
     ap.add_argument("--companion", choices=["silent", "scripted", "llm"], default="scripted", help="story mode: which Walt")
     ap.add_argument("--demo", default=None, help="folder for screenshots: plays by itself, saves no game")
+    ap.add_argument("--playtest", action="store_true",
+                    help="Study 2 playtest: night and Walt version come from the player ID (hidden)")
     args = ap.parse_args()
     if args.demo is not None:
         os.environ["SDL_AUDIODRIVER"] = "dummy"       # demo runs silently
@@ -1405,6 +1431,9 @@ def main():
     window.save_path = args.out
     window.story_night = args.night
     window.companion = args.companion
+    window.playtest = args.playtest
+    if args.playtest:
+        window.story_night = "A"                     # story mode; the real night comes from the player ID
     window.sounds.start_music()
     while True:
         try:
@@ -1429,15 +1458,26 @@ def main():
             print(f"Game saved to {out}")
         window.sounds.play("win" if outcome == "escaped" else "death")
         ending_scene(window, outcome)
+        if window.story_night is not None and args.demo is None:     # Study 2: questions after every night
+            from window.story_window import post_night_questions
+            answers = post_night_questions(window, rows)
+            answers.update({"player_id": player_id, "run_id": rows[0]["run_id"], "night": window.story_night,
+                            "companion": window.companion, "story_game_number": rows[0]["story_game_number"],
+                            "outcome": outcome})
+            save_game([answers], "data/story_answers.csv")
         window.room_label = "The end"
         paragraphs = [(ENDINGS[outcome], COLORS["text"])]
         if window.last_result:
             paragraphs.append((f"Last attraction: {window.last_result[0]}", COLORS[window.last_result[1]]))
         next_night = NEXT_NIGHT[window.story_night]
-        if outcome == "escaped" and next_night is None:     # after Night C: the real end
+        if window.playtest and next_night is not None and outcome != "escaped":   # every player plays all 3 nights
+            choice = window.card("Trapped... for now", paragraphs,
+                                 choices=[("next", "The next night  [Space]", [pygame.K_SPACE, pygame.K_RETURN]),
+                                          ("menu", "Main menu  [Q]", [pygame.K_q])])
+        elif outcome == "escaped" and next_night is None:     # after Night C: the real end
             choice = window.card("The End", paragraphs,
                                  choices=[("menu", "The End  [Space]", [pygame.K_SPACE, pygame.K_RETURN])])
-        elif outcome == "escaped":          # "The End"... unless the player comes back the next night
+        elif outcome == "escaped" and next_night is not None:    # "The End"... unless the player comes back
             choice = window.card("The End?", paragraphs,
                                  choices=[("next", "...or maybe not?  [Space]", [pygame.K_SPACE, pygame.K_RETURN]),
                                           ("menu", "The End  [Q]", [pygame.K_q])])

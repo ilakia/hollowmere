@@ -68,12 +68,31 @@ class StoryPolicy(PW.WindowPolicy):
     def __init__(self, window, names_known):
         super().__init__(window)
         self.names_known = names_known      # victims whose names Walt has told (so the label can show them)
+        self.coach = None                   # Walt's hint coach in the current victim fight (set by the narrator)
+        self.help_asks = 0                  # "Walt, help!" presses in the current room
 
     def choose_action(self, view, rng):
         """Walt's hint ladder: a new hint line (view["walt_line"]) is spoken before the player chooses."""
         if view.get("walt_line"):
             self.window.speak(view["walt_line"])
         return super().choose_action(view, rng)
+
+    def on_help(self, view):
+        """"Walt, help!" (victim fights): Walt's coach answers (silent: '...', scripted: the next fixed hint,
+        LLM: his own decision). Costs no turn. Counted for the study."""
+        self.help_asks += 1
+        coach = self.coach
+        if coach is None:
+            return
+        fight = {"turn": view.get("turn", 1), "weakness_used": view.get("weakness_used", False),
+                 "hp_share": view["hp"] / view["max_hp"], "tried": view.get("tried", {})}
+        level, line = coach.ask_help(fight)
+        self.window.bubble = ""
+        self.window.speak(line)
+
+    def take_help_asks(self):
+        count, self.help_asks = self.help_asks, 0
+        return count
 
     def display_ghosts(self, view):
         if not view.get("victim"):
@@ -156,7 +175,8 @@ class StoryPolicy(PW.WindowPolicy):
         names = {b.name: b for b in buttons}
         row = [names["attack"], names["defend"], names["potion"],
                Button("shine", "L  Shine", (0, 0, 1, 1), [pygame.K_l]),
-               Button("call", "N  Call name", (0, 0, 1, 1), [pygame.K_n])]
+               Button("call", "N  Call name", (0, 0, 1, 1), [pygame.K_n]),
+               Button("help", "H  Help!", (0, 0, 1, 1), [pygame.K_h])]
         if "rest" in names:
             row.append(names["rest"])
         width = (WIDTH - 20 - 8 * (len(row) - 1)) // len(row)
@@ -236,6 +256,7 @@ class StoryNarrator(PW.WindowNarrator):
             self.tell_about(victim, state.get("coach"))
         else:
             w.bubble = PW.WALT_BUBBLE.get(w.help_mode, "")
+        self.policy.coach = state.get("coach") if victim else None
 
     def draw_walk(self, state, beat, walked, appear, stepping, moved):
         """The normal walk, plus (Night B) a keepsake that glints on the ground halfway: press E while it is
@@ -331,6 +352,7 @@ class StoryNarrator(PW.WindowNarrator):
         self.room_titles.append(self.story.by_id[row["beat_id"]]["title"])
         self.zone_titles.append(self.story.by_id[row["beat_id"]]["title"])
         row["timing_score"] = self.policy.take_room_timing()
+        row["help_asks"] = self.policy.take_help_asks()
         band = row["band"]
         result = "cleared" if row["cleared"] else "not cleared"
         self.last_result = (f"{result}, HP lost {row['hp_lost_ratio']:.0%}, {PW.BAND_TEXT[band]}", band)
@@ -382,6 +404,66 @@ def play_story_night(window, story, night, brain_name):
         update_profile(window.player_id, rows, skill, keepsakes=getattr(narrator, "keepsakes", None))
     window.last_result = narrator.last_result
     return rows, seed
+
+
+# ---------------------------------------------------------------- questions after each night (Study 2)
+RATING_QUESTIONS = [
+    ("fun", "How much fun was this night?", ["1 no fun", "2", "3", "4", "5 great fun"]),
+    ("walt_helped", "Did Walt help you?", ["1 not at all", "2", "3", "4", "5 a lot"]),
+    ("walt_companion", "Did Walt feel like a real companion?", ["1 not at all", "2", "3", "4", "5 very much"]),
+    ("difficulty_felt", "How hard was this night?", ["1 far too easy", "2 a bit easy", "3 just right",
+                                                     "4 a bit hard", "5 far too hard"]),
+]
+
+
+def ask_question(window, number, total, text, options):
+    """One question on its own screen, answers as buttons (keys 1-5). Output: index of the chosen answer."""
+    w = window
+    count = len(options)
+    width = min(240, (WIDTH - 40 - 10 * (count - 1)) // count)
+    start = (WIDTH - (count * width + 10 * (count - 1))) // 2
+    buttons = [Button(f"answer:{i}", option, (start + i * (width + 10), 330, width, 54), [pygame.K_1 + i])
+               for i, option in enumerate(options)]
+
+    def draw_scene(dt):
+        w.scenery.draw_back(w.canvas, 1)
+        w.fog.draw(w.canvas, dt)
+        panel = pygame.Rect(60, 90, 840, 320)
+        pygame.draw.rect(w.canvas, COLORS["panel"], panel, border_radius=14)
+        pygame.draw.rect(w.canvas, COLORS["glow"], panel, width=2, border_radius=14)
+        draw_text(w.canvas, f"Question {number} of {total}", w.font_small, COLORS["dim_text"], WIDTH // 2, 120, center=True)
+        for i, line in enumerate(PW.wrap_text(text, w.font_big, 760)):
+            draw_text(w.canvas, line, w.font_big, COLORS["text"], WIDTH // 2, 180 + 40 * i, center=True)
+        draw_text(w.canvas, f"Click an answer or press 1-{count}", w.font_small, COLORS["dim_text"],
+                  WIDTH // 2, 300, center=True)
+    if w.demo_dir is not None:
+        w.demo_choice = buttons[0].name
+    choice = w.wait_for(draw_scene, buttons)
+    return int(choice.split(":")[1])
+
+
+def post_night_questions(window, rows):
+    """After a story night: 4 ratings and one comprehension question per victim met (3 answers in a fixed
+    shuffled order). Output: dict of answers (saved by play_window.py to data/story_answers.csv)."""
+    victims = [r["victim"] for r in rows if r.get("victim")]
+    total = len(RATING_QUESTIONS) + len(victims)
+    answers = {}
+    window.room_label = "A few questions"
+    for number, (key, text, options) in enumerate(RATING_QUESTIONS, start=1):
+        answers[key] = ask_question(window, number, total, text, options) + 1          # 1-5
+    for i, victim in enumerate(victims):
+        question, right, wrong = VICTIMS[victim]["question"]
+        options = [right] + list(wrong)
+        order = sorted(range(3), key=lambda k: hash_order(victim, k))                    # same order for everyone
+        shown = [options[k] for k in order]
+        picked = ask_question(window, len(RATING_QUESTIONS) + i + 1, total, question, shown)
+        answers[f"understood_{victim}"] = shown[picked] == right
+    return answers
+
+
+def hash_order(victim, k):
+    """A fixed, victim-specific shuffle key (so the right answer is not always the first button)."""
+    return (len(victim) * 7 + k * 5 + ord(victim[0]) * k) % 11
 
 
 NIGHT_CHOICES = list(NIGHTS)

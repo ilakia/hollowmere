@@ -23,7 +23,11 @@ python robustness_experiment.py --games 300 # held-out bot type and +/-20% sensi
 
 # Study 2 (story mode "Night of the Fire", see STUDY2.md)
 python story_check.py --games 300           # balance check of the six victim ghosts (naive vs smart bots)
-python play_window.py --night A --companion scripted   # or pick Mode / Walt on the title screen (G, < >)
+python story_brains_check.py --games 100    # whole nights with silent / scripted Walt (bots)
+python story_brains_check.py --brains llm --nights A --games 1   # LLM Walt, small batch (needs Ollama)
+python play_window.py --night A --companion llm   # one night with a chosen Walt (silent, scripted, llm)
+python play_window.py --playtest            # the real playtest: night and Walt version come from the player ID
+python analyze_study2.py                    # results per Walt version from the playtest data
 
 # LLM directors need Ollama: brew install ollama && brew services start ollama && ollama pull llama3.2:3b
 python llm_experiment.py --games 25 --batch 2 --pause 180                     # plain LLM director
@@ -55,6 +59,9 @@ python llm_experiment.py --controller llm_risk --games 25 --batch 2 --pause 180 
 | `robustness_experiment.py` | Held-out bot type (re-learn without one type, test on it) and +/-20% changes to the game |
 | `play.py` | Human play in the terminal, telemetry saved under an anonymous ID |
 | `play_window.py` | Game window (pygame): title menu (pick the director), walk through each zone with Walt (hold RIGHT), ghosts appear at each attraction and the room's fight starts, park map per zone, timing bar for attacks; games saved to `data/window_runs.csv`; `--demo` plays by itself for testing |
+| `game/story_mode.py`, `game/victims.py`, `game/chapters.py` | Study 2 story mode: the three Walt brains (difficulty + help, hint ladder, "Walt, help!"), the six victim ghosts and their fights, the three nights as chapters (keepsakes, fire) |
+| `game/walt_llm.py`, `game/profiles.py`, `game/playtest.py` | LLM Walt's prompts and answer checks, the player memory across nights (`data/player_profiles.json`), the playtest rotation by player ID |
+| `story_check.py`, `story_brains_check.py`, `analyze_study2.py` | Victim balance check, whole-night bot check per Walt version, Study 2 analysis (`data/story_runs.csv`, `data/story_answers.csv`) |
 | `window/` | Pixel-art sprites (`art.py`), layered park per zone with lighting (`scenery.py`), a detailed animated scene for every attraction (`setpieces.py` + `pieces_z1.py`, `pieces_z2.py`, `pieces_z3.py`, shared tools in `pieces_kit.py`), particles, shake, fog (`effects.py`), sounds and music generated in code (`sound.py`), Walt's spoken voice via macOS text-to-speech (`voice.py`, cached in `data/voice/`), park map (`park_map.py`) |
 
 **Seeds:** 0–1999 training (tables, tuning, bandit learning), 50000+ validation (bandit exploration strength), 100000–100999 final director test, 200000+ failure-predictor test. Nothing was tuned on test seeds.

@@ -22,6 +22,7 @@ VICTIMS = {
                "clue_words": ["dark", "lamp", "light"],
                "hint2": "Martha always went quiet when the light was on her. You've got my flashlight, kid.",
                "hint3": 'Shine the flashlight on her, kid! Press L! The light freezes her.',
+               "question": ('What was Martha Bell afraid of?', 'The dark', ['Fire', 'Crowds']),
                "scripted": "That's Martha Bell. Sold tickets here for thirty years. Hated the dark, that woman. "
                            "Never once turned off the lamp at her booth."},
     "benny": {"name": "Benny Ortiz", "role": "carousel operator", "beat": "z1_carousel", "hp": 60, "damage": 7,
@@ -30,6 +31,7 @@ VICTIMS = {
               "clue_words": ["music", "still", "stop"],
               "hint2": 'Watch the music box, kid. Hold on while it plays. When it runs down, Benny stands still.',
               "hint3": 'Defend while the music plays, then strike the moment it stops! Not before!',
+              "question": ('When did Benny Ortiz stand still?', 'When the music box ran down', ['When it rained', 'When the lights flickered']),
               "scripted": "Benny Ortiz ran this carousel. Never let it stop, not for a second. Only time Benny "
                           "stood still was when the music box ran down."},
     "rosa": {"name": "Rosa Lindqvist", "role": "park photographer", "beat": "z1_photo_booth", "hp": 90, "damage": 6,
@@ -38,6 +40,7 @@ VICTIMS = {
              "clue_words": ["lens", "lamp", "light"],
              "hint2": 'Her camera, kid. When she lifts it, give that lens some light.',
              "hint3": 'When she lifts the camera, press L and shine into the lens! Her own flash blinds her.',
+             "question": ("What could blind Rosa's camera?", 'A light shone into the lens', ['A loud noise', 'Calling her name']),
              "scripted": "Rosa took everybody's picture. Always said a camera's blind to everything but light. "
                          "Kids used to shine a torch into her lens when she lifted it. Drove her crazy."},
     "henry": {"name": "Henry Pike", "role": "Clown Alley barker", "beat": "z2_clown_alley", "hp": 140, "damage": 6,
@@ -47,6 +50,7 @@ VICTIMS = {
               "clue_words": ["great henry", "stage name"],
               "hint2": 'He wants to hear his name, kid. Not the one on his paycheck. The one on the posters.',
               "hint3": 'Call him "The Great Henry"! Press N! Calms him right down. And do it again when he gets loud.',
+              "question": ('What calmed Henry Pike down?', 'His stage name, The Great Henry', ['A song from the carousel', 'Complete silence']),
               "scripted": "That's Henry Pike, the barker. Loud as a fire bell. Only way to calm him down was to "
                           "call him by his stage name: The Great Henry."},
     "twins": {"name": "Lily Ward", "role": "Hall of Mirrors attendant", "beat": "z2_mirrors", "hp": 45, "damage": 4,
@@ -55,6 +59,7 @@ VICTIMS = {
               "clue_words": ["ribbon", "red"],
               "hint2": 'One of them is real, kid. Look at what the reflections never wear.',
               "hint3": 'Hit the Lily with the red ribbon! Hitting the reflection only heals her.',
+              "question": ('How could you tell the real Lily from her reflections?', 'Her red ribbon', ['Her shadow', 'Her voice']),
               "scripted": "Lily Ward ran the Hall of Mirrors. Sweet girl. Never took off her mother's red ribbon. "
                           "Funny thing: her reflections never had it."},
     "ned": {"name": "Ned Carver", "role": "ghost train engineer", "beat": "z3_ghost_train", "hp": 80, "damage": 6,
@@ -63,6 +68,7 @@ VICTIMS = {
             "clue_words": ["whistle", "came past", "reach"],
             "hint2": "You can't reach Ned while the train is away, kid. Wait for the whistle.",
             "hint3": 'Attack when the whistle blows and the train comes past! Any other time you barely touch him.',
+            "question": ('When could you reach Ned Carver?', 'When the train came past, whistle blowing', ['When the train stopped at the station', 'When the lights went out']),
             "scripted": "Old Ned Carver never got off that train. Every lap, all night. Only time you could "
                         "reach him was when it came past, whistle blowing."},
 }
@@ -143,6 +149,7 @@ def play_victim_room(player, victim_id, help_mode, policy, rng, difficulty="norm
                     "victim": victim_id, "victim_hp": hp["main"], "victim_max_hp": v["hp"], "cue": cue,
                     "blind": blind > 0, "stunned": stunned > 0, "targets": targets, "help_mode": help_mode,
                     "turn": turn,                      # lets the window show countdowns (Benny's music box)
+                    "tried": dict(tried), "weakness_used": t["weakness_used"],   # for "Walt, help!"
                     # cues that look like a charge-up: players' habit (defend) is NOT the weakness here.
                     # warning False: Walt's generic "it's glowing, DEFEND!" would be wrong advice for victims
                     "wind_up": cue in ("camera_up", "whistle"), "warning": False,
