@@ -299,6 +299,18 @@ def victim_ghostly(color):
     return (min(255, int(r * 0.45 + 120)), min(255, int(g * 0.45 + 135)), min(255, int(b * 0.45 + 150)))
 
 
+def smoky(color):
+    """The smoke of the fire (Night B finale): the wraith's shape in dark greys."""
+    grey = (color[0] + color[1] + color[2]) // 3
+    return (grey // 2 + 40, grey // 2 + 38, grey // 2 + 42)
+
+
+def blazing(color):
+    """The fire itself (Night C finale): the wraith's shape in burning orange and yellow."""
+    bright = (color[0] + color[1] + color[2]) // 3
+    return (255, min(255, 80 + bright // 2), min(120, bright // 4))
+
+
 def load_sprites():
     """All sprite images plus their white hit-flash and light-outline versions.
     Output: dict name -> (image, flash, outline)."""
@@ -308,6 +320,8 @@ def load_sprites():
     # the real Lily's red ribbon stays bright red: it is the clue that tells her from her reflection
     images["lily"] = make_sprite(LILY, lambda col: col if col == PALETTE["r"] else victim_ghostly(col))
     images["walt_ghost"] = make_sprite(WALT, ghostly)
+    images["smoke"] = make_sprite(WRAITH, smoky)
+    images["blaze"] = make_sprite(WRAITH, blazing)
     sprites = {}
     for name, img in images.items():
         sprites[name] = (img, silhouette(img, (255, 255, 255)), silhouette(img, (255, 235, 190)))

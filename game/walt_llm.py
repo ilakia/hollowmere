@@ -9,8 +9,63 @@ says one short sentence to the player, in character, which is spoken aloud in th
 The model answers with the NUMBER of an option (easier to check than free text) plus the sentence.
 Anything invalid falls back to scripted Walt's choice and is logged as decision_source = "fallback".
 """
+import json
+import threading
+import time
+import urllib.request
+from pathlib import Path
+
 from . import config as C
-from .llm import round_to
+from .llm import MODEL, OLLAMA_URL, TIMEOUT_SECONDS, LLMClient, round_to
+
+WALT_CACHE = Path("data/walt_cache.json")
+ANSWER_TOKENS = {"|walt": 50, "|walt_hint": 45, "|walt_help": 45, "|walt_story": 75, "|warmup": 5}
+
+
+class WaltClient(LLMClient):
+    """The Study 1 client (same model, temperature 0, seed 42, cache) with two changes for live play:
+    a cap on the answer length (num_predict, the answer is short JSON anyway: on the test laptop the model
+    writes about 8 tokens per second, so every token counts) and keep_alive, so the model stays loaded
+    for the whole playtest. Own cache file, so Study 1's cache is never touched."""
+
+    def __init__(self, model=MODEL, cache_path=WALT_CACHE):
+        super().__init__(model, cache_path)
+        self.lock = threading.Lock()       # questions can come from several background threads at once
+
+    def ask(self, user_message, system_prompt, tag=""):
+        key = self.model + tag + "\n" + user_message
+        with self.lock:
+            if key in self.cache:
+                self.cache_hits += 1
+                return self.cache[key]
+        body = {"model": self.model, "stream": False, "format": "json", "keep_alive": "60m",
+                "options": {"temperature": 0, "seed": 42, "num_predict": ANSWER_TOKENS.get(tag, 60)},
+                "messages": [{"role": "system", "content": system_prompt},
+                             {"role": "user", "content": user_message}]}
+        request = urllib.request.Request(OLLAMA_URL, data=json.dumps(body).encode("utf-8"),
+                                         headers={"Content-Type": "application/json"})
+        start = time.time()
+        try:
+            with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+                reply = json.loads(response.read().decode("utf-8"))
+            answer = json.loads(reply["message"]["content"])
+            if not isinstance(answer, dict):
+                answer = {}
+        except Exception:      # server down, timeout, cut-off or broken JSON: the caller falls back
+            answer = {}
+            self.failures += 1
+        with self.lock:
+            self.seconds += time.time() - start
+            self.calls += 1
+            if tag != "|warmup":
+                self.cache[key] = answer
+        return answer
+
+    def save_cache(self):
+        with self.lock:
+            snapshot = dict(self.cache)
+        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        self.cache_path.write_text(json.dumps(snapshot, indent=0), encoding="utf-8")
 
 WALT_SYSTEM_PROMPT = """You are Walt, an old park mechanic who died in the 1987 fire at Hollowmere Park.
 You are the companion of a player who is trying to get through the haunted park in one night.
@@ -28,11 +83,10 @@ You get a short list of options. Each option was scored by a prediction model tr
 earlier players: the chance that the room ends in band, too easy or too hard for THIS player right now.
 Prefer options with a high in-band chance and a low too-hard chance.
 
-Answer ONLY with JSON: {"option": <number of the option>, "say": "...", "reason": "..."}
-- say: ONE short sentence (at most 20 words) that you say to the player before the room, in your voice:
+Answer ONLY with JSON: {"option": <number of the option>, "say": "..."}
+- say: ONE short sentence (at most 15 words) that you say to the player before the room, in your voice:
   gruff, warm, a bit old-fashioned, calls the player "kid". Say how you will help (or that you stay back).
-  Never mention difficulty, numbers, percentages or the options.
-- reason: one short sentence for the researchers: why this option."""
+  Never mention difficulty, numbers, percentages or the options. Never repeat a line you already said."""
 
 FINALE_NOTE = ("This is the FINALE: the player fights YOU at the gate, so you do not help (help_mode none). "
                "The best ending is a close fight the player can win, so choose by the numbers.")
@@ -40,7 +94,7 @@ SAY_MAX_WORDS = 22
 
 
 def walt_prompt(night, room_index, rooms, hp, max_hp, potions, skill_estimate, last_band, victim, options,
-                is_finale, memory=""):
+                is_finale, memory="", said=()):
     """The situation for LLM Walt in plain text, with the scored options.
     Inputs: the night state as Walt sees it, the next victim id (or None) and the scored options
     Output: the user message (string). Numbers are rounded so similar situations share one cached answer."""
@@ -58,6 +112,8 @@ def walt_prompt(night, room_index, rooms, hp, max_hp, potions, skill_estimate, l
             lines.append("This is the first room tonight: in 'say', greet them like you remember them.")
     if is_finale:
         lines.append(FINALE_NOTE)
+    if said:
+        lines.append("Lines you already said tonight (say something new): " + " / ".join(said))
     lines.append("Options (predicted for this player):")
     for number, o in enumerate(options, start=1):
         lines.append(f"{number}. difficulty={o['difficulty']}, help_mode={o['help_mode']}: "
@@ -69,7 +125,7 @@ def walt_prompt(night, room_index, rooms, hp, max_hp, potions, skill_estimate, l
 def check_answer(answer, options):
     """Validate the model's answer.
     Inputs: the parsed JSON (dict, {} if it failed) and the options it could choose from
-    Output: (chosen option dict or None, the sentence to say or None, the reason text)"""
+    Output: (chosen option dict or None, the sentence to say or None)"""
     option = None
     number = answer.get("option")
     if isinstance(number, str) and number.strip().isdigit():
@@ -85,8 +141,7 @@ def check_answer(answer, options):
         leaks = any(ch.isdigit() for ch in say) or "%" in say or "difficult" in say.lower()
         if too_long or leaks:
             say = None                   # the sentence breaks the rules: Walt says his scripted line instead
-    reason = answer.get("reason") if isinstance(answer.get("reason"), str) else ""
-    return option, say, reason
+    return option, say
 
 
 def study1_room_index(room_index, rooms):
@@ -108,14 +163,13 @@ Hint levels:
 3 = say exactly what to do
 You can stay at the current level or go up, never down. Go up when the player is stuck or getting hurt;
 stay when they are doing fine or only just started.
-Answer ONLY with JSON: {"level": 1|2|3, "say": "...", "reason": "..."}
-- say: what you say now, ONE or TWO short sentences (at most 25 words), gruff and warm, call the player "kid".
-  If you stay at level 1, say something encouraging WITHOUT new information.
-- reason: one short sentence for the researchers."""
+Answer ONLY with JSON: {"level": 1|2|3, "say": "..."}
+- say: what you say now, ONE short sentence (at most 20 words), gruff and warm, call the player "kid".
+  If you stay at level 1, say something encouraging WITHOUT new information."""
 
 STORY_SYSTEM_PROMPT = """You are Walt, an old park mechanic who died in the 1987 fire at Hollowmere Park.
 A ghost appears: someone you knew and who died in the fire. Tell the player who they were, in your own words,
-in TWO or THREE short sentences (at most 45 words), gruff and warm, like an old man remembering a friend.
+in TWO short sentences (at most 35 words), gruff and warm, like an old man remembering a friend.
 You MUST include the fact you are given, because it is the only way to beat them, but tell it as a memory,
 not as an instruction. Never mention buttons, keys or game words like HP, attack or damage.
 Answer ONLY with JSON: {"say": "..."}"""

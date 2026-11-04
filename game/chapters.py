@@ -41,8 +41,11 @@ NIGHT_STORY = {
         "walt_is_ghost": False,
         "intro": None,                           # the normal "Midnight" card
         "gate_line": "The gate is just ahead. Nearly out, kid.",
+        "travel_lines": ["This way, kid.", "Stay close.", "Don't touch anything that moves.", "Almost there.",
+                         "These rides were something, back then.", "Hear that? Keep walking."],
         "reveal_line": "I never left this park, kid. Neither will you.",
         "flashback": "clues",
+        "finale_enemy": "walt",                  # Night A: the player fights Walt himself
         "finale_start": "Now you know, kid. Let's finish this.",
         "farewell": "Not bad, kid. Not bad at all. Go on. Don't look back.",
         "fire": False,
@@ -56,14 +59,21 @@ NIGHT_STORY = {
                    "'Funny thing. I can't remember the night of the fire. If you find any of my things, pick "
                    "them up.'  (Press E when something glints on the way.)"]),
         "intro_line": "You came back, kid. So now you know what I am.",
-        "gate_line": "The gate again. It won't open for me, kid. It never has.",
-        "reveal_line": "Beat me, and the park has to let you go.",
+        "gate_line": "The gate again. Something's holding it shut, kid. Smells like smoke.",
+        "reveal_line": "The smoke from that night! It never left. Together, kid!",
+        "travel_lines": ["Keep your eyes on the ground, kid. My things must be somewhere.",
+                         "I walked this path every night for thirty years. Can't remember the last one.",
+                         "Rosa used to stand right there with her camera.",
+                         "Something shiny back there? No... keep looking.",
+                         "The boats... I fixed their motors the week before.",
+                         "Almost at the gate. Let's see if it lets us through this time."],
         "flashback": "keepsakes",
+        "finale_enemy": "smoke",                 # Night B: Walt fights WITH the player against the smoke
         "flashback_intro": "Let me see what you found, kid.",
         "flashback_none": "You found nothing of mine. Maybe it's better I don't remember.",
         "flashback_end": "There's something I never told you, kid. About the fire.",
-        "finale_start": "Come on then, kid. One more time.",
-        "farewell": "Come back tomorrow night, kid. I want to remember the rest.",
+        "finale_start": "Hit it while I keep it busy, kid!",
+        "farewell": "The gate's open. Come back tomorrow night, kid. I want to remember the rest.",
         "fire": False,
     },
     "C": {
@@ -74,14 +84,21 @@ NIGHT_STORY = {
                    "The park is burning, the way it burned in 1987. Every attraction a little more.",
                    "'Tonight I remember everything, kid. Stay close.'"]),
         "intro_line": "Tonight I remember everything, kid. Stay close.",
-        "gate_line": "The gate. This is where it ended, kid.",
-        "reveal_line": "One last fight, kid. Then we can all go.",
+        "gate_line": "The gate. This is where it ended, kid. The fire's still here.",
+        "reveal_line": "That's the fire that took us. One last fight, kid. For all of us.",
+        "travel_lines": ["Smell that? Same as that night. Stay low, kid.",
+                         "Benny's music box was the last thing I heard before the roof came down.",
+                         "Henry kept shouting for people to get out. Loudest man in the park.",
+                         "The fire jumped from roof to roof, right along here.",
+                         "The boats burned on the water. Strangest thing I ever saw.",
+                         "Nearly at the gate. I know what's waiting there now."],
         "flashback": "fire",
+        "finale_enemy": "blaze",                 # Night C: together against the fire itself
         "flashback_intro": "June 1987. Here's what really happened.",
         "flashback_missing": "A memory you never found.",
         "flashback_end": ("It wasn't anyone's fault, kid. Just an old radio. I got the gate open, "
                           "then I went back in for them."),
-        "finale_start": "Let's finish it. For all of us.",
+        "finale_start": "Now, kid! Put it out for good!",
         "farewell": "Thank you, kid. We can all go home now.",
         "fire": True,
     },
@@ -107,7 +124,10 @@ def all_lines():
         if story.get("intro_line"):
             normal.append(story["intro_line"])
         normal.append(story["gate_line"])
-        for key in ("reveal_line", "flashback_intro", "flashback_none", "flashback_end", "finale_start",
+        normal += story["travel_lines"]
+        (ghost if story["finale_enemy"] == "walt" else normal).append(story["reveal_line"])
+        (ghost if story["finale_enemy"] == "walt" else normal).append(story["finale_start"])
+        for key in ("flashback_intro", "flashback_none", "flashback_end",
                     "farewell", "flashback_missing"):
             if story.get(key):
                 ghost.append(story[key])

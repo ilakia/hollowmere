@@ -19,7 +19,7 @@ from game import config as C
 from game.chapters import FIRE_GLOW_PER_ROOM, KEEPSAKE_BY_ID, KEEPSAKES, NIGHT_STORY, keepsake_for_room
 from game.profiles import load_profile, update_profile
 from game.story_mode import BRAINS, play_night
-from game.victims import NIGHTS, VICTIMS
+from game.victims import BENNY_MUSIC_TURNS, NIGHTS, VICTIMS
 from window.art import COLORS, HEIGHT, WIDTH, Button, draw_text
 
 GROUND_Y = PW.GROUND_Y
@@ -28,6 +28,7 @@ VICTIM_SPRITE = {"martha": "martha", "benny": "benny", "rosa": "rosa", "henry": 
 SPRITE_VICTIM = {"martha": "martha", "benny": "benny", "rosa": "rosa", "henry": "henry", "lily": "twins",
                  "lily_reflection": "twins", "ned": "ned"}
 SILENT_LINE = "Careful, kid. Something's here."
+FINALE_NAMES = {"smoke": "The Smoke", "blaze": "The Blaze"}
 
 
 def draw_music_box(c, w, x, y, playing, turns_left=0):
@@ -69,6 +70,7 @@ class StoryPolicy(PW.WindowPolicy):
         super().__init__(window)
         self.names_known = names_known      # victims whose names Walt has told (so the label can show them)
         self.coach = None                   # Walt's hint coach in the current victim fight (set by the narrator)
+        self.finale_enemy = None            # Night B / C: what Walt and the player fight at the gate
         self.help_asks = 0                  # "Walt, help!" presses in the current room
 
     def choose_action(self, view, rng):
@@ -96,6 +98,8 @@ class StoryPolicy(PW.WindowPolicy):
 
     def display_ghosts(self, view):
         if not view.get("victim"):
+            if self.finale_enemy:                                # same fight as Walt's, shown as the fire
+                return [(self.finale_enemy if kind == "walt" else kind, hp) for kind, hp in view["enemies"]]
             return view["enemies"]
         if view.get("targets"):              # Lily and her reflection
             return [("lily" if side == "real" else "lily_reflection",
@@ -105,9 +109,13 @@ class StoryPolicy(PW.WindowPolicy):
     def full_hp(self, kind, view, hp_mult):
         if view.get("victim"):
             return view["victim_max_hp"]
+        if kind in FINALE_NAMES:
+            return C.ENEMY_TYPES["walt"]["hp"] * hp_mult
         return super().full_hp(kind, view, hp_mult)
 
     def ghost_label(self, kind):
+        if kind in FINALE_NAMES:
+            return FINALE_NAMES[kind]
         victim = SPRITE_VICTIM.get(kind)
         if victim is None:
             return kind
@@ -116,8 +124,14 @@ class StoryPolicy(PW.WindowPolicy):
         return "???"
 
     def draw_cues(self, c, view, ghost_marks):
-        """The tells: what a watchful player can see this turn."""
+        """The tells: what a watchful player can see this turn. Also: LLM Walt's late answers are spoken
+        the moment they arrive (the fight never waits for him)."""
         w = self.window
+        if self.coach is not None:
+            line = self.coach.poll()
+            if line:
+                w.bubble = ""
+                w.speak(line)
         cue = view.get("cue")
         victim = view.get("victim")
         if not victim:
@@ -126,21 +140,22 @@ class StoryPolicy(PW.WindowPolicy):
         if victim == "benny":
             stopped = cue == "music_stopped"
             w.sounds.carousel_music(playing=not stopped)             # the waltz plays / goes silent
-            turns_left = 3 - view.get("turn", 1) % 3                  # the music stops on turns 3, 6, 9 ...
+            period = BENNY_MUSIC_TURNS                                 # the music stops every 2nd turn
+            turns_left = period - view.get("turn", 1) % period
             draw_music_box(c, w, 470, GROUND_Y + 2, playing=not stopped, turns_left=turns_left)
             if stopped:
                 draw_text(c, "The music box runs down... silence. Benny stands still.", w.font_big,
-                          COLORS["charge"], WIDTH // 2, 105, center=True)
+                          COLORS["charge"], WIDTH // 2, 62, center=True)
             else:
                 for i in range(3):                                   # motion lines: the ride keeps spinning
                     a = time.time() * 8 + i * 2.1
                     pygame.draw.arc(c, (220, 220, 255), (x - 60, GROUND_Y - 150 + i * 30, 120, 40),
                                     a % 6.28, a % 6.28 + 1.6, 3)
                 draw_text(c, "The music box plays... the carousel spins, Benny with it.", w.font,
-                          COLORS["dim_text"], WIDTH // 2, 105, center=True)
+                          COLORS["dim_text"], WIDTH // 2, 62, center=True)
         if victim == "rosa" and cue == "camera_up":
             PW.draw_glow(c, x + 20, GROUND_Y - 80, 70, (255, 255, 220), strength=60)
-            draw_text(c, "Rosa lifts her camera...", w.font_big, COLORS["charge"], WIDTH // 2, 105, center=True)
+            draw_text(c, "Rosa lifts her camera...", w.font_big, COLORS["charge"], WIDTH // 2, 62, center=True)
         if victim == "ned" and cue == "whistle":
             speed = (time.time() * 900) % (WIDTH + 400)              # the ghost train rushes past
             train_x = int(speed) - 300
@@ -150,13 +165,13 @@ class StoryPolicy(PW.WindowPolicy):
                 pygame.draw.circle(c, (90, 90, 100), (car_x + 20, GROUND_Y - 12), 10)
                 pygame.draw.circle(c, (90, 90, 100), (car_x + 80, GROUND_Y - 12), 10)
             draw_text(c, "WHOOO! The ghost train comes past, Ned at the front!", w.font_big, COLORS["charge"],
-                      WIDTH // 2, 105, center=True)
+                      WIDTH // 2, 62, center=True)
         if victim == "martha" and cue == "lights_flicker":
             dim = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
             dim.fill((0, 0, 0, 90 if int(time.time() * 10) % 2 else 30))
             c.blit(dim, (0, 0))
             draw_text(c, "The lights flicker... Martha grows taller in the dark.", w.font, COLORS["dim_text"],
-                      WIDTH // 2, 105, center=True)
+                      WIDTH // 2, 62, center=True)
         if view.get("stunned"):
             word = "calm... (for now)" if victim == "henry" else "frozen!"
             draw_text(c, word, w.font_big, (200, 230, 255), x, GROUND_Y - 170, center=True)
@@ -164,7 +179,7 @@ class StoryPolicy(PW.WindowPolicy):
             haze = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
             haze.fill((255, 255, 240, 120))
             c.blit(haze, (0, 0))
-            draw_text(c, "Blinded by the flash! You can't see!", w.font_big, COLORS["damage"], WIDTH // 2, 140, center=True)
+            draw_text(c, "Blinded by the flash! You can't see!", w.font_big, COLORS["damage"], WIDTH // 2, 440, center=True)
         if victim == "henry" and not view.get("stunned") and int(time.time()) % 4 == 0:
             PW.draw_bubble(c, w.font_small, "WHO AM I?! SAY MY NAME!", x, 230)
 
@@ -212,6 +227,7 @@ class StoryPolicy(PW.WindowPolicy):
 
 class StoryNarrator(PW.WindowNarrator):
     """Shows a story-mode night: zone cards, walking, the victims appearing, Walt's words, the result."""
+    background_llm = True                    # play_night: LLM calls run in the background, never freeze
 
     def __init__(self, story, window, policy, brain_name, night):
         super().__init__(None, story, window, policy)
@@ -222,6 +238,43 @@ class StoryNarrator(PW.WindowNarrator):
         self.keepsakes = []                  # Night B: ids of the keepsakes picked up tonight
         self.keepsakes_before = []           # Night C: keepsakes found in Night B (from the player's profile)
         self.keepsake_state = None           # the keepsake on the current walk: None, "lying", "taken"
+        self.job = None                      # Walt's decision for the current room (made while walking)
+        self.applied = True
+
+    def before_room_deciding(self, state, info, job):
+        """Zone card and walk while Walt decides (job). His decision is applied the moment it is ready; the
+        ghosts only wait at the end of the walk if it is still not ready. Output: the decision."""
+        self.job, self.applied = job, False
+        self.before_room(state, info)
+        return job.result
+
+    def apply_decision(self, state):
+        """Walt's decision has arrived: set difficulty and help, and let him say his line."""
+        w = self.window
+        self.applied = True
+        w.difficulty = state["difficulty"]                       # chosen by Walt's brain, never shown
+        w.help_mode = state["help_mode"] if not self.walt_is_enemy(state) else None
+        if state["is_finale"]:
+            return                                               # at the gate the story lines speak
+        if state.get("walt_say"):                                # LLM Walt's own sentence
+            w.speak(state["walt_say"])
+        elif w.help_mode != self.last_mode:                      # scripted/silent: explain a new behaviour
+            w.speak(PW.WALT_BUBBLE.get(w.help_mode, ""))
+        self.last_mode = w.help_mode
+
+    def walk_tick(self, state):
+        if not self.applied and self.job.done():
+            self.apply_decision(state)
+
+    def ready_to_appear(self, state):
+        return self.applied
+
+    def walt_is_enemy(self, state):
+        return state["walt_is_enemy"]
+
+    def travel_line(self, state):
+        lines = self.chapter["travel_lines"]
+        return lines[state["room_index"] % len(lines)]
 
     def before_room(self, state, info):
         w = self.window
@@ -232,10 +285,9 @@ class StoryNarrator(PW.WindowNarrator):
             w.fire_level = FIRE_GLOW_PER_ROOM * (state["room_index"] + 1)     # the park burns a bit more
         self.walk_keepsake = keepsake_for_room(self.night, state["room_index"])
         self.keepsake_state = "lying" if self.walk_keepsake else None
-        w.is_finale = state["is_finale"]
+        w.is_finale = self.walt_is_enemy(state)                  # B / C: Walt stays at your side at the gate
         w.zone = state["zone"]
-        w.help_mode = None if state["is_finale"] else state["help_mode"]
-        w.difficulty = state["difficulty"]                       # chosen by Walt's brain, never shown
+        w.help_mode = self.last_mode                             # unknown until Walt has decided
         if state["zone"] != self.zone_seen:
             self.zone_card(state, beat)
             self.zone_seen = state["zone"]
@@ -247,21 +299,34 @@ class StoryNarrator(PW.WindowNarrator):
             shown["enemies"] = ["lily", "lily_reflection"]
         elif victim:
             shown["enemies"] = [VICTIM_SPRITE[victim]]
+        elif state["is_finale"] and not self.walt_is_enemy(state):
+            shown["enemies"] = [self.chapter["finale_enemy"]]     # the smoke / the blaze
+        if state["is_finale"] and self.chapter["flashback"] == "fire":
+            self.flashback()                                     # Night C: first what happened, then the fight
         self.walk_and_meet(state, shown)
+        if not self.applied:
+            self.apply_decision(state)
         if state["is_finale"]:
-            self.flashback()
+            if self.chapter["flashback"] == "clues":             # Night A: the reveal, then the signs
+                self.flashback()
             w.bubble = ""
-            w.speak(w.finale_start, ghost=True)
+            w.speak(w.finale_start, ghost=self.walt_is_enemy(state))
         elif victim:
             self.tell_about(victim, state.get("coach"))
-        else:
+        elif not state.get("walt_say"):
             w.bubble = PW.WALT_BUBBLE.get(w.help_mode, "")
         self.policy.coach = state.get("coach") if victim else None
+        self.policy.finale_enemy = None if self.walt_is_enemy(state) or not state["is_finale"] \
+            else self.chapter["finale_enemy"]
 
     def draw_walk(self, state, beat, walked, appear, stepping, moved):
         """The normal walk, plus (Night B) a keepsake that glints on the ground halfway: press E while it is
         near to pick it up. Walk past it and it is gone for tonight."""
         super().draw_walk(state, beat, walked, appear, stepping, moved)
+        if walked >= PW.WALK_DISTANCE and appear is None and not self.applied:
+            dots = "." * (1 + int(time.time() * 3) % 3)
+            draw_text(self.window.canvas, f"Walt is thinking{dots}", self.window.font, COLORS["flashlight"],
+                      WIDTH // 2, 440, center=True)
         if self.keepsake_state != "lying":
             return
         if appear is not None:                   # the ghosts are here: walked past it, gone for tonight
@@ -311,29 +376,6 @@ class StoryNarrator(PW.WindowNarrator):
                 self.memory_scene(None, story["flashback_missing"], style="burnt")
         self.memory_scene(None, story["flashback_end"])
 
-    def think(self, work):
-        """Run work() (LLM Walt's decision, can take a few seconds) in a background thread while the
-        window keeps drawing: the last picture stays, with Walt's '...' thinking dots.
-        Output: whatever work() returned."""
-        w = self.window
-        result = {}
-
-        def run():
-            result["value"] = work()
-
-        thread = threading.Thread(target=run, daemon=True)
-        thread.start()
-        frozen = w.canvas.copy()
-        while thread.is_alive():
-            w.tick()
-            w.canvas.blit(frozen, (0, 0))
-            dots = "." * (1 + int(time.time() * 3) % 3)
-            draw_text(w.canvas, f"Walt is thinking{dots}", w.font, COLORS["flashlight"], WIDTH // 2, HEIGHT - 70,
-                      center=True)
-            w.present(capture=False)
-        thread.join()
-        return result["value"]
-
     def tell_about(self, victim, coach):
         """What Walt says when a victim appears (hint level 1). Silent Walt: nothing useful. Scripted Walt:
         the fixed life story. LLM Walt: the life story in his own words. From then on the name is shown."""
@@ -348,6 +390,8 @@ class StoryNarrator(PW.WindowNarrator):
 
     def after_room(self, state, row):
         self.window.sounds.end_carousel()
+        if state["is_finale"] and row["cleared"] and self.chapter["flashback"] == "keepsakes":
+            self.flashback()                                     # Night B: the gate is open, Walt remembers
         self.visited.append(row["beat_id"])
         self.room_titles.append(self.story.by_id[row["beat_id"]]["title"])
         self.zone_titles.append(self.story.by_id[row["beat_id"]]["title"])

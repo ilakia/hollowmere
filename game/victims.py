@@ -83,6 +83,7 @@ NIGHTS = {
 STUNNED_TURNS = 2           # Martha / Rosa after the flashlight: no attacks, take double damage
 BLIND_TURNS = 2             # after Rosa's flash: the player's attacks miss
 RIDE_RECOIL = 5             # attacking Benny's spinning carousel throws you off
+BENNY_MUSIC_TURNS = 2       # the music box runs down every 2nd turn (every 3rd made the fight drag on)
 NED_FAR_FACTOR = 1 / 3      # hitting Ned while the train is away: a third of the damage
 WRONG_NAME_RAGE = 2         # turns Henry hits 50% harder after a wrong name
 HENRY_CALM_TURNS = 3        # the right name calms Henry for 3 turns (no attacks, double damage), then he shouts again
@@ -92,7 +93,7 @@ MIRROR_CRACK_HITS = 3       # ... until the mirror cracks after 3 hits and the r
 
 def cue_for(victim_id, turn):
     """What the player can see this turn (the 'tell'). turn starts at 1 in each attempt."""
-    if victim_id == "benny" and turn % 3 == 0:
+    if victim_id == "benny" and turn % BENNY_MUSIC_TURNS == 0:
         return "music_stopped"          # the only turns Benny stands still
     if victim_id == "rosa" and turn % 3 == 2:
         return "camera_up"              # she flashes at the end of this turn
@@ -214,6 +215,7 @@ def play_victim_room(player, victim_id, help_mode, policy, rng, difficulty="norm
                     if cue == "music_stopped":
                         if last_action in ("defend", "rest"):
                             used_weakness()            # waited (defended) for the music to stop, then struck
+                            damage_mult = 2.0          # caught him standing still: a clean, double hit
                     else:
                         hits = False                   # thrown off the spinning ride
                         ride_recoil = True

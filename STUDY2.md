@@ -27,11 +27,12 @@ short. Walt knew every one of them, so what he tells about them contains the **c
 | A | **Ned Carver** | Ghost-train engineer | **Attack while the train passes** (whistle): double damage; otherwise a third of the damage | "Only time you could reach him was when it came past, whistle blowing." | Whistle, train rushes past |
 | B | **Rosa Lindqvist** | Photographer | **Shine into her lens** when she lifts the camera: her own flash blinds her. Otherwise her flash blinds you | "A camera's blind to everything but light." | Camera goes up |
 | B | **Lily Ward** (and reflection) | Hall of Mirrors attendant | **Attack the real Lily** (red ribbon); hitting the reflection heals her until the mirror cracks | "Never took off her mother's red ribbon. Her reflections never had it." | Two Lilys |
-| C | **Benny Ortiz** | Carousel operator | **Defend while the music plays, strike when it stops**; attacking the spinning ride throws you off | "Only time Benny stood still was when the music box ran down." | Carousel waltz plays / goes silent, music box with countdown |
+| C | **Benny Ortiz** | Carousel operator | **Defend while the music plays, strike when it stops** (every 2nd turn): a double hit; attacking the spinning ride throws you off | "Only time Benny stood still was when the music box ran down." | Carousel waltz plays / goes silent, music box with countdown |
 | C | **Henry Pike** | Clown Alley barker | **Call his stage name** (N, 3 choices): "The Great Henry" calms him for 3 turns (no attacks, double damage), then he shouts again | "Only way to calm him down was his stage name: The Great Henry." | "WHO AM I?!" |
 
 Balance check (`python story_check.py`, bots): using the weakness saves turns and HP for every victim
-(e.g. Martha 11.8 -> 8.7 turns, 56% -> 0% HP lost; Henry 14.9 -> 9.5 turns). For Ned and the twins naive
+(e.g. Martha 11.8 -> 8.7 turns, 56% -> 0% HP lost; Henry 14.9 -> 9.5 turns; Benny 12.8 -> 5.8 turns after
+the pilot, where the music box "took forever": it now runs down every 2nd turn instead of every 3rd). For Ned and the twins naive
 players hit the weakness **by chance** (87% / 52% of naive bots), so for them how often it is used matters
 more than whether it was used once.
 
@@ -40,8 +41,13 @@ more than whether it was used once.
 | Night | Chapter | What is new in this night |
 |---|---|---|
 | A | **The First Night** | Walt seems human. Silent signs in the park (photo wall, mirrors, wax museum, workshop). At the gate he reveals he is a ghost and shows the signs the player walked past |
-| B | **You Came Back** | Walt is a ghost all night and cannot remember the fire. **Five keepsakes** glint along the walks (press E); at the gate he remembers what the found ones show. Measure: keepsakes found |
-| C | **The Fire** | The park burns more with every room. Before the gate: the fire of June 1987, **one scene per keepsake found in Night B** (missed ones stay burnt-out frames), the truth, the last fight and the true ending |
+| B | **You Came Back** | Walt is a ghost all night and cannot remember the fire. **Five keepsakes** glint along the walks (press E). At the gate Walt fights **with** the player against **the Smoke** of the fire; once the gate is open he remembers what the found keepsakes show. Measure: keepsakes found |
+| C | **The Fire** | The park burns more with every room. Before the gate: the fire of June 1987, **one scene per keepsake found in Night B** (missed ones stay burnt-out frames) and the truth. Then Walt and the player fight **the Blaze** together; true ending |
+
+Pilot feedback (5 Nov) changed the finales of B and C: fighting Walt again after he became an ally made no
+sense. The Smoke and the Blaze have exactly Walt's fight values (same HP, damage and charged attack), so the
+finale stays equally hard; the difference is that Walt helps (help chosen by his brain, like any room).
+Walt's travel lines in B and C now belong to the story of that night, so the rooms connect.
 
 Each night has 7 rooms: 4 normal rooms, 2 victim rooms, the finale (`game/victims.py`, NIGHTS). The story
 text lives in `game/chapters.py`.
@@ -71,7 +77,7 @@ claim which single feature made the difference.
 |---|---|---|---|
 | **Difficulty + help before each room** (hidden from the player) | fixed: always normal + hint (= Study 1 **fixed** director) | rules on the skill estimate (= Study 1 **rule** director) | band-model shortlist, the LLM picks (= Study 1 **llm_risk** director) and says one sentence why/how he helps |
 | **Victim life story** (hint level 1, contains the clue) | none ("Careful, kid. Something's here.") | fixed, hand-written | told by the LLM from a fact sheet; must contain a clue word, otherwise the fixed text |
-| **Hint ladder during a victim fight** (1 story, 2 nudge, 3 exact move) | none (level 0) | fixed: level 2 at turn 4, level 3 at turn 7 | the LLM decides at turns 3/5/7/9 whether to reveal more, from what the player tried and how hurt they are |
+| **Hint ladder during a victim fight** (1 story, 2 nudge, 3 exact move) | none (level 0) | fixed: level 2 at turn 4, level 3 at turn 7 | the LLM decides at turns 3 and 6 whether to reveal more, from what the player tried and how hurt they are |
 | **"Walt, help!" button** (H, costs no turn) | "..." | the next fixed hint level | the LLM decides what to say (checked like the hints) |
 | **Memory across nights** | none | none | a player profile (style, deaths, which weaknesses were found and with which hint, keepsakes) goes into every prompt; skill estimate carries over; he greets a returning player |
 | Voice, fights, victims, chapters | same for all three versions | | |
@@ -81,7 +87,13 @@ Safety and fairness rules for LLM Walt (`game/walt_llm.py`):
   sentence must be short and must not mention difficulty or numbers; hints of level 2/3 and the life story
   must contain one of the victim's clue words. Anything invalid falls back to scripted Walt (logged).
 - He can only choose among the same difficulty levels and help modes as the other versions.
-- All answers are cached (`data/llm_cache.json`); calls, cache hits and seconds are logged per room.
+- All answers are cached (`data/walt_cache.json`, separate from Study 1's cache); calls, cache hits and
+  seconds are logged per room. He is shown his last 3 sentences so he does not repeat himself.
+- **The game never waits for the model** (pilot feedback: "Walt is thinking" was annoying). Every call runs
+  in the background: the room decision while the player walks to the room (the ghosts wait only if it is
+  still not ready), the life stories as soon as the night starts, hints and help answers during the fight
+  (spoken the moment they arrive; "Let me think, kid..." in the meantime). Bots run every call at once, so
+  bot results stay repeatable.
 - Cut (to save time and laptop heat): Walt's comments after each room.
 
 ## 5. What is measured
@@ -110,12 +122,13 @@ all weaknesses).
 
 | Walt | Rooms in band (naive) | Too hard (naive) | Weakness found (listen bots) | Difficulty chosen |
 |---|---|---|---|---|
-| silent | 57% | 16% | 24% (by chance only) | always normal |
-| scripted | 56% | 14% | 90% | 96% normal, 4% easy |
+| silent | 60% | 13% | 24% (by chance only) | always normal |
+| scripted | 59% | 11% | 90% | 96% normal, 4% easy |
 | LLM | 76% | 5% | 100% | 49% hard, 49% normal |
 
 Scripted and silent: 100 nights per night x bot type x player type. **LLM: only 9 nights of Night A**
-(the model is slow and the laptop gets hot), so the LLM row is a first sign, not a result.
+(the model is slow and the laptop gets hot), so the LLM row is a first sign, not a result; it was run
+before the pilot changes (shorter answers, Benny every 2nd turn) and should be repeated.
 Findings to keep in mind:
 - The rule director never chooses "hard" (by design in Study 1), so scripted Walt can barely adjust for good
   players; LLM Walt does use "hard".
@@ -145,7 +158,8 @@ Ollama running (`brew services start ollama`); the model is loaded while the int
 
 - **Check with the professor** that Study 2 (and the fixed night order) is fine with the accepted exposé.
   Share the design change with the team.
-- LLM speed on the test laptop: about 6 s per answer when warm, about 24 s for the first (cold) answer.
-  In the game the model is warmed up during the intro cards, and "Walt is thinking..." is shown while he
-  decides (about 6 s before each room). Test heat and waiting time in the pilot; fallback: `llama3.2:1b`.
+- LLM speed on the test laptop: the model writes about 8 tokens per second (10-13 s per answer during the
+  pilot, with the game running). Answers were shortened (no "reason" field, length cap), which roughly
+  halves the time, and every call now runs in the background. If it is still too slow: `llama3.2:1b`
+  (needs a download, ask first).
 - Test IDs: nights already saved under an ID count for playtest mode, so real players need fresh IDs.

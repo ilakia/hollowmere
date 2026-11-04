@@ -726,8 +726,8 @@ class WindowNarrator:
             elif beat_id:
                 w.set_beat, w.set_target = beat_id, (MEMORY_X - 640) / 0.8           # the piece at MEMORY_X
                 w.draw_piece(170, 300, False)
-                if style != "fire":
-                    w.draw_sprite("player", 170, GROUND_Y)                               # the player was not there in 1987
+                if style == "clue":
+                    w.draw_sprite("player", 170, GROUND_Y)                               # memories of 1987: no player
                 w.draw_sprite("walt", 300, GROUND_Y)                                     # Walt as he seemed then
                 w.scenery.draw_front(c, zone, [(380, GROUND_Y - 70, 150, COLORS["flashlight"])])
                 old = pygame.transform.grayscale(c)                                      # turn it into an old memory
@@ -789,21 +789,22 @@ class WindowNarrator:
             w.speak(WALT_BUBBLE.get(w.help_mode, ""))
             self.last_mode = w.help_mode
         else:
-            w.speak(TRAVEL_LINES[state["room_index"] % len(TRAVEL_LINES)])
+            w.speak(self.travel_line(state))
         while True:
             dt = w.tick()
             stepping = False
+            self.walk_tick(state)
             if appear is None:
                 if w.walk_held():
                     walked = min(WALK_DISTANCE, walked + WALK_SPEED * dt)
                     w.scenery.world_x = start_world + walked
                     stepping = True
                     moved = True
-                if walked >= WALK_DISTANCE:
+                if walked >= WALK_DISTANCE and self.ready_to_appear(state):
                     appear = 0.0
                     w.sounds.play("charge")
                     if state["is_finale"]:
-                        w.speak(w.reveal_line, ghost=True)
+                        w.speak(w.reveal_line, ghost=self.walt_is_enemy(state))
             else:
                 appear += dt
                 if appear >= APPEAR_SECONDS:
@@ -813,10 +814,24 @@ class WindowNarrator:
             w.present(capture=capture)
             frame += 1
 
+    def travel_line(self, state):
+        return TRAVEL_LINES[state["room_index"] % len(TRAVEL_LINES)]
+
+    def walk_tick(self, state):
+        """Called every frame of the walk (story mode: Walt's decision may arrive)."""
+
+    def ready_to_appear(self, state):
+        """False keeps the ghosts away at the end of the walk (story mode: Walt has not decided yet)."""
+        return True
+
+    def walt_is_enemy(self, state):
+        """True when Walt turns against the player at the gate (classic game and story Night A)."""
+        return state["is_finale"]
+
     def draw_walk(self, state, beat, walked, appear, stepping, moved):
         w = self.window
         c = w.canvas
-        finale = state["is_finale"]
+        finale = self.walt_is_enemy(state)
         w.scenery.draw_back(c, w.zone)
         k = 0.0 if appear is None else min(1.0, appear / 0.6)          # slide into fight positions
         player_x = int(230 + (170 - 230) * k)
