@@ -28,7 +28,7 @@ SILENT_LINE = "Careful, kid. Something's here."
 BRAINS = {"silent": SilentBrain, "scripted": ScriptedBrain}
 
 
-def draw_music_box(c, w, x, y, playing):
+def draw_music_box(c, w, x, y, playing, turns_left=0):
     """Benny's music box on the ground: the key turns and notes float up while it plays; when it runs
     down the lid drops, the key stops and the notes are gone."""
     box = pygame.Rect(x - 34, y - 34, 68, 34)
@@ -46,13 +46,18 @@ def draw_music_box(c, w, x, y, playing):
             ny = box.y - 10 - int(phase * 60)
             pygame.draw.circle(c, (255, 230, 150), (nx, ny), 4)
             pygame.draw.line(c, (255, 230, 150), (nx + 4, ny), (nx + 4, ny - 12), 2)
-    key_angle = time.time() * 6 if playing else 0.0                 # the winding key on the side
+    key_angle = time.time() * 3 * turns_left if playing else 0.0    # the key slows down as it runs down
     kx, ky = box.right + 8, box.centery
     pygame.draw.line(c, (200, 200, 210), (box.right, ky), (kx, ky), 3)
     for side in (-1, 1):
         pygame.draw.line(c, (200, 200, 210), (kx, ky),
                          (kx + int(10 * math.cos(key_angle) * side), ky + int(10 * math.sin(key_angle) * side)), 4)
-    draw_text(c, "music box", w.font_small, COLORS["dim_text"], x, y + 14, center=True)
+    if playing:                                                     # how long until it runs down
+        label = "runs down next turn!" if turns_left == 1 else f"runs down in {turns_left} turns"
+        color = COLORS["charge"] if turns_left == 1 else COLORS["dim_text"]
+    else:
+        label, color = "silent", COLORS["charge"]
+    draw_text(c, label, w.font_small, color, x, y + 14, center=True)
 
 
 class StoryPolicy(PW.WindowPolicy):
@@ -94,7 +99,8 @@ class StoryPolicy(PW.WindowPolicy):
         if victim == "benny":
             stopped = cue == "music_stopped"
             w.sounds.carousel_music(playing=not stopped)             # the waltz plays / goes silent
-            draw_music_box(c, w, 470, GROUND_Y + 2, playing=not stopped)
+            turns_left = 3 - view.get("turn", 1) % 3                  # the music stops on turns 3, 6, 9 ...
+            draw_music_box(c, w, 470, GROUND_Y + 2, playing=not stopped, turns_left=turns_left)
             if stopped:
                 draw_text(c, "The music box runs down... silence. Benny stands still.", w.font_big,
                           COLORS["charge"], WIDTH // 2, 105, center=True)
