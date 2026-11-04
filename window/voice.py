@@ -51,6 +51,7 @@ class WaltVoice:
     def __init__(self, lines, ghost_lines, enabled=True, voice=VOICE):
         self.ready = {}                  # (text, ghost) -> pygame Sound
         self.channel = None
+        self.wanted = None               # the line Walt should be saying right now
         self.preview_process = None
         self.voice = voice
         self.generation = 0              # goes up when the voice changes, so old background work is ignored
@@ -102,10 +103,29 @@ class WaltVoice:
             self.channel.stop()
 
     def speak(self, text, ghost=False, muted=False):
-        """Say a line (if its file is ready and sound is on). A new line interrupts the previous one."""
+        """Say a line (if sound is on). A new line interrupts the previous one. A line that was not
+        prepared at the start (e.g. a sentence LLM Walt just made up) is made now in the background
+        and played as soon as it is ready (about a second), unless Walt has moved on to another line."""
+        self.wanted = (text, ghost)
+        if muted or not self.enabled or not text:
+            return
         sound = self.ready.get((text, ghost))
-        if sound is None or muted or not self.enabled:
+        if sound is None:
+            threading.Thread(target=self.make_and_play, args=(text, ghost, self.voice), daemon=True).start()
             return
         if self.channel is not None:
             self.channel.stop()
         self.channel = sound.play()
+
+    def make_and_play(self, text, ghost, voice):
+        """Background thread for a new line: make the WAV, then play it if it is still wanted."""
+        try:
+            path = make_line(text, ghost, voice)
+            sound = pygame.mixer.Sound(str(path))
+        except (subprocess.SubprocessError, OSError, pygame.error):
+            return
+        self.ready[(text, ghost)] = sound
+        if self.wanted == (text, ghost) and voice == self.voice:
+            if self.channel is not None:
+                self.channel.stop()
+            self.channel = sound.play()

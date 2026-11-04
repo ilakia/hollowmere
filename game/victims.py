@@ -20,18 +20,24 @@ VICTIMS = {
                "accuracy": 0.8, "weakness": "shine",
                "fact": "Martha was terrified of the dark and never once turned off the lamp at her ticket booth.",
                "clue_words": ["dark", "lamp", "light"],
+               "hint2": "Martha always went quiet when the light was on her. You've got my flashlight, kid.",
+               "hint3": 'Shine the flashlight on her, kid! Press L! The light freezes her.',
                "scripted": "That's Martha Bell. Sold tickets here for thirty years. Hated the dark, that woman. "
                            "Never once turned off the lamp at her booth."},
     "benny": {"name": "Benny Ortiz", "role": "carousel operator", "beat": "z1_carousel", "hp": 60, "damage": 7,
               "accuracy": 0.8, "weakness": "quiet_attack",
               "fact": "Benny kept the carousel turning all day; the only time he stood still was when the music box ran down.",
               "clue_words": ["music", "still", "stop"],
+              "hint2": 'Watch the music box, kid. Hold on while it plays. When it runs down, Benny stands still.',
+              "hint3": 'Defend while the music plays, then strike the moment it stops! Not before!',
               "scripted": "Benny Ortiz ran this carousel. Never let it stop, not for a second. Only time Benny "
                           "stood still was when the music box ran down."},
     "rosa": {"name": "Rosa Lindqvist", "role": "park photographer", "beat": "z1_photo_booth", "hp": 90, "damage": 6,
              "accuracy": 0.8, "weakness": "shine_lens",
              "fact": "Rosa, the park photographer, used to say a camera is blind to everything but light: point a lamp into the lens when she lifts it and she cannot see a thing.",
              "clue_words": ["lens", "lamp", "light"],
+             "hint2": 'Her camera, kid. When she lifts it, give that lens some light.',
+             "hint3": 'When she lifts the camera, press L and shine into the lens! Her own flash blinds her.',
              "scripted": "Rosa took everybody's picture. Always said a camera's blind to everything but light. "
                          "Kids used to shine a torch into her lens when she lifted it. Drove her crazy."},
     "henry": {"name": "Henry Pike", "role": "Clown Alley barker", "beat": "z2_clown_alley", "hp": 140, "damage": 6,
@@ -39,18 +45,24 @@ VICTIMS = {
               "name_choices": ["Henry Pike", "The Great Henry", "Hank the Barker"],
               "fact": "Henry, the barker of Clown Alley, only calmed down when people called him by his stage name, The Great Henry.",
               "clue_words": ["great henry", "stage name"],
+              "hint2": 'He wants to hear his name, kid. Not the one on his paycheck. The one on the posters.',
+              "hint3": 'Call him "The Great Henry"! Press N! Calms him right down. And do it again when he gets loud.',
               "scripted": "That's Henry Pike, the barker. Loud as a fire bell. Only way to calm him down was to "
                           "call him by his stage name: The Great Henry."},
     "twins": {"name": "Lily Ward", "role": "Hall of Mirrors attendant", "beat": "z2_mirrors", "hp": 45, "damage": 4,
               "accuracy": 0.8, "weakness": "real_target",
               "fact": "Lily, who ran the Hall of Mirrors, never took off her mother's red ribbon; her reflections never had it.",
               "clue_words": ["ribbon", "red"],
+              "hint2": 'One of them is real, kid. Look at what the reflections never wear.',
+              "hint3": 'Hit the Lily with the red ribbon! Hitting the reflection only heals her.',
               "scripted": "Lily Ward ran the Hall of Mirrors. Sweet girl. Never took off her mother's red ribbon. "
                           "Funny thing: her reflections never had it."},
     "ned": {"name": "Ned Carver", "role": "ghost train engineer", "beat": "z3_ghost_train", "hp": 80, "damage": 6,
             "accuracy": 0.75, "weakness": "attack_whistle",
             "fact": "Ned, the ghost train engineer, rode the train every lap; the only moment anyone could reach him was when it came past with its whistle blowing.",
             "clue_words": ["whistle", "came past", "reach"],
+            "hint2": "You can't reach Ned while the train is away, kid. Wait for the whistle.",
+            "hint3": 'Attack when the whistle blows and the train comes past! Any other time you barely touch him.',
             "scripted": "Old Ned Carver never got off that train. Every lap, all night. Only time you could "
                         "reach him was when it came past, whistle blowing."},
 }
@@ -85,20 +97,28 @@ def cue_for(victim_id, turn):
     return None
 
 
-def play_victim_room(player, victim_id, help_mode, policy, rng):
+def play_victim_room(player, victim_id, help_mode, policy, rng, difficulty="normal", coach=None):
     """One fight against a victim ghost. Changes `player` in place, returns the room's telemetry
-    (the same keys as engine.play_room plus the Study 2 measures)."""
-    v = VICTIMS[victim_id]
+    (the same keys as engine.play_room plus the Study 2 measures).
+    difficulty scales the victim's HP and damage exactly like normal ghosts (config.DIFFICULTY).
+    coach (optional, game/story_mode.py) = Walt's hint ladder: before every turn it may raise the hint
+    level and give a line, which the player sees as view["walt_line"] / view["hint_level"]."""
+    v = dict(VICTIMS[victim_id])
+    v["hp"] = v["hp"] * C.DIFFICULTY[difficulty]["hp_mult"]
+    v["damage"] = v["damage"] * C.DIFFICULTY[difficulty]["damage_mult"]
     t = {"hp_start": player.hp, "turns": 0, "hits": 0, "misses": 0, "damage_taken": 0.0, "hp_healed": 0.0,
          "potions_used": 0, "companion_heals": 0, "defends": 0, "defends_on_windup": 0, "windups_seen": 0,
          "deaths": 0, "cleared": False, "quit": False, "out_of_lives": False,
          "victim": victim_id, "weakness_used": False, "turn_first_used": None, "shines": 0,
-         "calls": 0, "wrong_calls": 0, "reflection_hits": 0, "blinded_turns": 0}
+         "calls": 0, "wrong_calls": 0, "reflection_hits": 0, "blinded_turns": 0,
+         "hint_level_max": 0, "hint_level_at_use": None, "hint_lines": 0}
+    tried = {}                                         # what the player has tried so far (for the coach)
 
     def used_weakness():
         if not t["weakness_used"]:
             t["weakness_used"] = True
             t["turn_first_used"] = t["turns"]
+            t["hint_level_at_use"] = t["hint_level_max"]   # how much Walt had revealed when it was found
 
     while True:                                        # one loop = one attempt at the room
         hp = {"main": float(v["hp"]), "reflection": float(v["hp"])}
@@ -127,7 +147,15 @@ def play_victim_room(player, victim_id, help_mode, policy, rng):
                     # warning False: Walt's generic "it's glowing, DEFEND!" would be wrong advice for victims
                     "wind_up": cue in ("camera_up", "whistle"), "warning": False,
                     "enemies": [(victim_id, hp["main"])]}
+            if coach is not None:
+                level, line = coach.step({"turn": t["turns"], "weakness_used": t["weakness_used"],
+                                          "hp_share": player.hp / C.PLAYER_MAX_HP, "tried": dict(tried)})
+                view["hint_level"], view["walt_line"] = level, line
+                t["hint_level_max"] = max(t["hint_level_max"], level)
+                t["hint_lines"] += line is not None
             action = policy.choose_action(view, rng)
+            kind = action.split(":")[0]
+            tried[kind] = tried.get(kind, 0) + 1
             defending = False
             damage_mult = 2.0 if (stunned > 0 or exposed) else 1.0
 

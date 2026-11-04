@@ -24,6 +24,7 @@ import math
 import os
 import random
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -44,6 +45,8 @@ from window.scenery import Scenery
 from window.setpieces import draw_set_piece
 from window.pieces_z3 import draw_big_gate
 from window.sound import SoundBank
+from game.chapters import NIGHT_STORY
+from game.chapters import all_lines as chapter_lines
 from window.voice import VOICE_OPTIONS, WaltVoice
 
 FPS = 30
@@ -76,7 +79,7 @@ MEMORY_SECONDS = 6.0
 MEMORY_WAIT_MAX = 8.0            # wait at most this long for the line before (e.g. the gate line) to end
 MEMORY_SECONDS_MAX = 30.0
 # After the escape the player chooses: "The End" or "...or maybe not?" (= straight into the next night)
-NEXT_NIGHT = {None: "A", "A": "B", "B": "C", "C": "A"}     # after Night C the player comes back to Night A
+NEXT_NIGHT = {None: "A", "A": "B", "B": "C", "C": None}    # Night C is the last chapter: the true ending
 # Finale: ghost-Walt speaks in bubbles (and in his slow ghost voice)
 FINALE_START_LINE = "Now you know, kid. Let's finish this."
 FINALE_CHARGE_LINE = "Here comes the light!"
@@ -233,7 +236,16 @@ class GameWindow:
         self.save_path = "data/window_runs.csv"
         ghost_spoken = ([REVEAL_LINE, FLASHBACK_INTRO, FLASHBACK_NONE] + list(FLASHBACK_LINES.values()) +
                         [FINALE_START_LINE, FINALE_CHARGE_LINE, FINALE_HURT_LINE, FAREWELL_LINE])
-        self.voice = WaltVoice(spoken, ghost_spoken, enabled=sound_on and demo_dir is None)
+        chapter_spoken, chapter_ghost = chapter_lines()                                  # Night B / C lines
+        self.voice = WaltVoice(spoken + chapter_spoken, ghost_spoken + chapter_ghost,
+                               enabled=sound_on and demo_dir is None)
+        # chapter settings (story mode sets them per night, see game/chapters.py; these are Night A / classic)
+        self.walt_is_ghost = False       # Night B and C: Walt is a ghost from the start
+        self.in_memory = False           # while a memory of 1987 is shown, Walt looks as he did then
+        self.fire_level = 0              # Night C: how strongly the park burns (orange glow, ash)
+        self.gate_line, self.reveal_line = GATE_LINE, REVEAL_LINE
+        self.finale_start, self.farewell = FINALE_START_LINE, FAREWELL_LINE
+        self.true_ending = False         # Night C: Walt and the six victims leave together
         self.director_name = director_name
         self.room_label = ""
         self.help_mode = None
@@ -268,6 +280,8 @@ class GameWindow:
     def draw_sprite(self, name, x, y_bottom, flash=False, flip=False, dy=0, alpha=255):
         """Draw a sprite standing on the ground at x (its centre). flash = white hit silhouette,
         alpha < 255 = partly see-through (ghosts fading in)."""
+        if name == "walt" and self.walt_is_ghost and not self.in_memory:
+            name = "walt_ghost"
         image, white, outline = self.sprites[name]
         if flash:
             image = white
@@ -327,6 +341,8 @@ class GameWindow:
         self.last_frame = now
         draw_scene(dt)
         self.screen.fill((0, 0, 0))
+        if self.fire_level > 0:
+            self.draw_fire(self.canvas)
         self.screen.blit(self.canvas, self.shake.offset())
         self.screen.blit(self.vignette, (0, 0))
         for button in buttons:
@@ -419,6 +435,8 @@ class GameWindow:
     def present(self, capture=False):
         """Show the canvas (with shake and dark edges). capture=True saves a screenshot in demo mode."""
         self.screen.fill((0, 0, 0))
+        if self.fire_level > 0:
+            self.draw_fire(self.canvas)
         self.screen.blit(self.canvas, self.shake.offset())
         self.screen.blit(self.vignette, (0, 0))
         pygame.display.flip()
@@ -426,6 +444,20 @@ class GameWindow:
             Path(self.demo_dir).mkdir(parents=True, exist_ok=True)
             pygame.image.save(self.screen, str(Path(self.demo_dir) / f"screen_{self.demo_shots:03d}.png"))
             self.demo_shots += 1
+
+    def draw_fire(self, c):
+        """Night C: an orange glow that grows with every room, rising embers and falling ash."""
+        glow = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        flicker = int(8 * math.sin(time.time() * 7))
+        glow.fill((255, 90, 20, max(0, min(140, self.fire_level + flicker))))
+        c.blit(glow, (0, 0))
+        t = time.time()
+        for i in range(10 + self.fire_level // 3):
+            phase = (t * (0.15 + (i % 5) * 0.04) + i * 0.137) % 1.0
+            x = (i * 97 + int(30 * math.sin(t + i))) % WIDTH
+            y = int(HEIGHT - phase * HEIGHT)
+            color = (255, 160, 60) if i % 3 else (120, 110, 110)          # embers rise, some grey ash
+            pygame.draw.circle(c, color, (x, y), 2 if i % 3 else 3)
 
     def demo_step(self, draw_scene, buttons):
         """Demo mode: draw one frame, save it as a screenshot, choose automatically."""
@@ -616,7 +648,7 @@ class WindowNarrator:
         if state["is_finale"]:
             self.flashback()
             w.bubble = ""
-            w.speak(FINALE_START_LINE, ghost=True)
+            w.speak(w.finale_start, ghost=True)
         else:
             w.bubble = WALT_BUBBLE.get(w.help_mode, "")
         return decision
@@ -644,10 +676,16 @@ class WindowNarrator:
         for beat_id, line in scenes:
             self.memory_scene(beat_id, line)
 
-    def memory_scene(self, beat_id, line):
-        """One flashback picture (about 6 s, Space to go on): the remembered room in sepia, with Walt
-        still looking human in it, a glowing ring around the clue, and ghost-Walt's words."""
+    def memory_scene(self, beat_id, line, style="clue"):
+        """One flashback picture (at least 6 s and until Walt has finished, Space to go on): the remembered
+        room with Walt still looking human in it, and ghost-Walt's words.
+        style: "clue"  = sepia, a glowing ring around the clue (Night A)
+               "keepsake" = sepia, no ring (Night B: what a found keepsake reminds him of)
+               "fire"  = the room burning in June 1987 (Night C)
+               "burnt" = a burnt-out frame: a memory the player never found (Night C)"""
         w = self.window
+        w.in_memory = True
+        fire_level, w.fire_level = w.fire_level, 0          # the memory has its own fire, not tonight's
         zone = self.story.by_id[beat_id]["zone"] if beat_id else 4
         saved_world, saved_beat = w.scenery.world_x, w.set_beat
         elapsed, frame = 0.0, 0
@@ -668,36 +706,59 @@ class WindowNarrator:
             c = w.canvas
             w.scenery.world_x = 0.0
             w.scenery.draw_back(c, zone)
-            if beat_id:
+            if style == "burnt":
+                c.fill((14, 10, 8))
+                for i in range(40):                                                      # charred edges
+                    ex = (i * 53) % WIDTH
+                    pygame.draw.circle(c, (40, 22, 12), (ex, 60 + (i * 31) % 40), 30)
+                    pygame.draw.circle(c, (40, 22, 12), (ex, HEIGHT - 60 - (i * 17) % 40), 30)
+                draw_text(c, "...", w.font_title, (90, 70, 60), WIDTH // 2, HEIGHT // 2 - 40, center=True)
+            elif beat_id:
                 w.set_beat, w.set_target = beat_id, (MEMORY_X - 640) / 0.8           # the piece at MEMORY_X
                 w.draw_piece(170, 300, False)
-                w.draw_sprite("player", 170, GROUND_Y)
+                if style != "fire":
+                    w.draw_sprite("player", 170, GROUND_Y)                               # the player was not there in 1987
                 w.draw_sprite("walt", 300, GROUND_Y)                                     # Walt as he seemed then
                 w.scenery.draw_front(c, zone, [(380, GROUND_Y - 70, 150, COLORS["flashlight"])])
                 old = pygame.transform.grayscale(c)                                      # turn it into an old memory
-                old.fill((255, 222, 170), special_flags=pygame.BLEND_MULT)
+                tint = (255, 150, 90) if style == "fire" else (255, 222, 170)
+                old.fill(tint, special_flags=pygame.BLEND_MULT)
                 c.blit(old, (0, 0))
-                x, y, r = CLUE_SPOTS[beat_id]
-                pulse = int(6 * math.sin(time.time() * 5))
-                pygame.draw.circle(c, (255, 230, 150), (x, y), r + pulse, 4)              # the clue, circled
+                if style == "fire":                                                      # flames along the ground
+                    for i in range(26):
+                        fx = (i * 41 + int(10 * math.sin(time.time() * 6 + i))) % WIDTH
+                        height = 40 + int(30 * abs(math.sin(time.time() * 4 + i * 1.7)))
+                        pygame.draw.polygon(c, (255, 120 + (i % 3) * 40, 30),
+                                            [(fx - 14, GROUND_Y + 20), (fx + 14, GROUND_Y + 20), (fx, GROUND_Y + 20 - height)])
+                    smoke = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+                    smoke.fill((40, 30, 30, 70))
+                    c.blit(smoke, (0, 0))
+                if style == "clue" and beat_id in CLUE_SPOTS:
+                    x, y, r = CLUE_SPOTS[beat_id]
+                    pulse = int(6 * math.sin(time.time() * 5))
+                    pygame.draw.circle(c, (255, 230, 150), (x, y), r + pulse, 4)          # the clue, circled
                 for _ in range(120):                                                     # film grain
                     gx, gy = random.randrange(WIDTH), random.randrange(HEIGHT)
                     c.set_at((gx, gy), (60, 50, 40))
-                draw_text(c, "MEMORY", w.font_big, (255, 235, 200), 30, 60)
-            else:
+                draw_text(c, "JUNE 1987" if style == "fire" else "MEMORY", w.font_big, (255, 235, 200), 30, 60)
+            else:                                                                        # back at the gate, tonight
+                w.in_memory = False
                 draw_big_gate(c, 560, 0.0, w.font)
                 w.draw_sprite("player", 170, GROUND_Y)
                 w.draw_sprite("walt_ghost", 730, GROUND_Y, flip=True)
+                w.in_memory = True
                 w.scenery.draw_front(c, zone, [(730, GROUND_Y - 60, 200, (120, 255, 190))], finale=True)
             for y in (0, HEIGHT - 50):                                                    # cinema bars
                 pygame.draw.rect(c, (0, 0, 0), (0, y, WIDTH, 50))
             if spoken_at is not None:
-                draw_bubble(c, w.font_small, line, 250 if beat_id else 730, 190)   # memories: left, clue stays visible
+                draw_bubble(c, w.font_small, line, 250 if beat_id or style == "burnt" else 730, 190)  # left: clue stays visible
             if elapsed > 1.0:
                 draw_text(c, "Space", w.font_small, COLORS["dim_text"], WIDTH - 60, HEIGHT - 30, center=True)
             w.present(capture=frame % 12 == 0)
             frame += 1
         w.scenery.world_x, w.set_beat = saved_world, saved_beat
+        w.in_memory = False
+        w.fire_level = fire_level
 
     def walk_and_meet(self, state, beat):
         """Walk to the attraction (hold RIGHT), then the ghosts fade in and the fight starts."""
@@ -710,7 +771,10 @@ class WindowNarrator:
         moved = False
         frame = 0
         if state["is_finale"]:
-            w.speak(GATE_LINE)
+            w.speak(w.gate_line)
+        elif state.get("walt_say"):                    # story mode, LLM Walt: his own sentence for this room
+            w.speak(state["walt_say"])
+            self.last_mode = w.help_mode
         elif w.help_mode != self.last_mode:            # Walt explains his new behaviour once
             w.speak(WALT_BUBBLE.get(w.help_mode, ""))
             self.last_mode = w.help_mode
@@ -729,7 +793,7 @@ class WindowNarrator:
                     appear = 0.0
                     w.sounds.play("charge")
                     if state["is_finale"]:
-                        w.speak(REVEAL_LINE, ghost=True)
+                        w.speak(w.reveal_line, ghost=True)
             else:
                 appear += dt
                 if appear >= APPEAR_SECONDS:
@@ -1192,7 +1256,7 @@ def ending_scene(w, outcome):
     elapsed = 0.0
     frame = 0
     if outcome == "escaped":
-        w.voice.speak(FAREWELL_LINE, ghost=True, muted=w.sounds.muted)
+        w.voice.speak(w.farewell, ghost=True, muted=w.sounds.muted)
     while elapsed < duration or (w.voice.is_speaking() and elapsed < 30):   # let Walt finish his goodbye
         dt = w.tick()
         elapsed += dt
@@ -1214,7 +1278,14 @@ def ending_scene(w, outcome):
             alpha = 255 if player_x < 560 else max(0, int(255 * (1 - (player_x - 560) / 160)))
             w.draw_sprite("player", player_x, GROUND_Y, alpha=alpha, dy=-int(abs(math.sin(elapsed * 8)) * 6 * (0 < walk < 1)))
             walt_alpha = max(0, int(255 * (1 - elapsed / 7.0)))                 # Walt fades into the light
-            w.draw_sprite("walt_ghost", 120, GROUND_Y, alpha=walt_alpha)
+            if w.true_ending:                     # Night C: Walt and the six victims walk into the dawn together
+                walt_alpha = max(0, int(255 * (1 - max(0.0, elapsed - 6.0) / 4.0)))
+                group_walk = min(1.0, max(0.0, (elapsed - 1.5) / 7.0))
+                for i, name in enumerate(["martha", "benny", "rosa", "henry", "lily", "ned", "walt_ghost"]):
+                    gx = int(-40 - i * 60 + 640 * group_walk)
+                    w.draw_sprite(name, gx, GROUND_Y + (i % 2) * 6, alpha=walt_alpha)
+            else:
+                w.draw_sprite("walt_ghost", 120, GROUND_Y, alpha=walt_alpha)
             if int(elapsed * 10) % 3 == 0:
                 w.particles.rise(120, GROUND_Y - 60, (255, 230, 170), count=2)
             w.particles.draw(c, dt)
@@ -1222,7 +1293,8 @@ def ending_scene(w, outcome):
             if elapsed > 4:
                 draw_text(c, "Dawn.", w.font_big, (255, 230, 190), WIDTH // 2, 120, center=True)
             if elapsed > 6.5:
-                draw_text(c, "Goodbye, Walt.", w.font_big, (255, 240, 220), WIDTH // 2, 165, center=True)
+                goodbye = "Goodbye, Walt. Goodbye, everyone." if w.true_ending else "Goodbye, Walt."
+                draw_text(c, goodbye, w.font_big, (255, 240, 220), WIDTH // 2, 165, center=True)
         else:
             darkness = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
             darkness.fill((0, 0, 0, min(255, int(255 * elapsed / 3.0))))         # the lights go out
@@ -1260,22 +1332,40 @@ def save_game(rows, out):
     table.to_csv(out, index=False)
 
 
+def start_llm_warm_up(window):
+    """LLM Walt: load the model in the background while the player reads the intro cards, so his first
+    decision does not take long (game/story_mode.py, warm_up_llm)."""
+    if window.story_night is not None and window.companion == "llm":
+        from game.story_mode import warm_up_llm
+        threading.Thread(target=warm_up_llm, daemon=True).start()
+
+
 def play_one_game(window, story, args):
     """Title -> intro -> the run -> ending. Output: (rows, director, seed) of the finished game."""
     window.room_label = ""
     window.bubble = ""
     window.scenery.world_x = 0.0
     window.set_beat = None
+    window.walt_is_ghost, window.true_ending, window.fire_level = False, False, 0   # Night A / classic settings
+    window.gate_line, window.reveal_line = GATE_LINE, REVEAL_LINE
+    window.finale_start, window.farewell = FINALE_START_LINE, FAREWELL_LINE
     if window.next_night_now:                 # "...or maybe not?" on the end card: no title screen
         window.next_night_now = False
         director = window.director_name
-        window.room_label = "Hollowmere Park, the next midnight"
-        window.card("The next night...", [
-            ("You wake up inside Hollowmere Park again. The gates are locked again.", COLORS["text"]),
-            ("A flashlight comes closer through the fog. You know whose it is.", COLORS["flashlight"])],
-            button_label="Follow the light  [Space]")
     else:
         director = title_menu(window, window.director_name)
+    start_llm_warm_up(window)
+    if window.story_night is not None:
+        window.director_name = "Night of the Fire"      # the Walt version stays hidden (blind playtest)
+    chapter = NIGHT_STORY[window.story_night] if window.story_night is not None else None
+    if chapter is not None and chapter["intro"] is not None:      # Night B / C: the player comes back
+        title, lines = chapter["intro"]
+        window.room_label = f"Night {window.story_night}: {chapter['title']}"
+        window.walt_is_ghost = chapter["walt_is_ghost"]
+        window.voice.speak(chapter["intro_line"], muted=window.sounds.muted)
+        window.card(title, [(lines[0], COLORS["text"])] + [(line, COLORS["flashlight"]) for line in lines[1:]],
+                    button_label="Follow the light  [Space]")
+    else:
         window.room_label = "Hollowmere Park, midnight"
         window.voice.speak(INTRO_LINE, muted=window.sounds.muted)
         window.card("Midnight", [
@@ -1303,7 +1393,7 @@ def main():
     ap.add_argument("--no-sound", action="store_true")
     ap.add_argument("--windowed", action="store_true", help="start in a window instead of full screen")
     ap.add_argument("--night", choices=["A", "B", "C"], default=None, help="start in story mode (Study 2) on this night")
-    ap.add_argument("--companion", choices=["silent", "scripted"], default="scripted", help="story mode: which Walt")
+    ap.add_argument("--companion", choices=["silent", "scripted", "llm"], default="scripted", help="story mode: which Walt")
     ap.add_argument("--demo", default=None, help="folder for screenshots: plays by itself, saves no game")
     args = ap.parse_args()
     if args.demo is not None:
@@ -1343,8 +1433,11 @@ def main():
         paragraphs = [(ENDINGS[outcome], COLORS["text"])]
         if window.last_result:
             paragraphs.append((f"Last attraction: {window.last_result[0]}", COLORS[window.last_result[1]]))
-        if outcome == "escaped":            # "The End"... unless the player comes back the next night
-            next_night = NEXT_NIGHT[window.story_night]
+        next_night = NEXT_NIGHT[window.story_night]
+        if outcome == "escaped" and next_night is None:     # after Night C: the real end
+            choice = window.card("The End", paragraphs,
+                                 choices=[("menu", "The End  [Space]", [pygame.K_SPACE, pygame.K_RETURN])])
+        elif outcome == "escaped":          # "The End"... unless the player comes back the next night
             choice = window.card("The End?", paragraphs,
                                  choices=[("next", "...or maybe not?  [Space]", [pygame.K_SPACE, pygame.K_RETURN]),
                                           ("menu", "The End  [Q]", [pygame.K_q])])

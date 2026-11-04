@@ -9,13 +9,16 @@ It reuses the normal window (walking, fights, voice, flashback) and only adds wh
 The rules of the fights are in game/victims.py; the night itself in game/story_mode.py.
 """
 import math
+import threading
 import time
 
 import pygame
 
 import play_window as PW
 from game import config as C
-from game.story_mode import ScriptedBrain, SilentBrain, play_night
+from game.chapters import FIRE_GLOW_PER_ROOM, KEEPSAKE_BY_ID, KEEPSAKES, NIGHT_STORY, keepsake_for_room
+from game.profiles import load_profile, update_profile
+from game.story_mode import BRAINS, play_night
 from game.victims import NIGHTS, VICTIMS
 from window.art import COLORS, HEIGHT, WIDTH, Button, draw_text
 
@@ -25,7 +28,6 @@ VICTIM_SPRITE = {"martha": "martha", "benny": "benny", "rosa": "rosa", "henry": 
 SPRITE_VICTIM = {"martha": "martha", "benny": "benny", "rosa": "rosa", "henry": "henry", "lily": "twins",
                  "lily_reflection": "twins", "ned": "ned"}
 SILENT_LINE = "Careful, kid. Something's here."
-BRAINS = {"silent": SilentBrain, "scripted": ScriptedBrain}
 
 
 def draw_music_box(c, w, x, y, playing, turns_left=0):
@@ -66,6 +68,12 @@ class StoryPolicy(PW.WindowPolicy):
     def __init__(self, window, names_known):
         super().__init__(window)
         self.names_known = names_known      # victims whose names Walt has told (so the label can show them)
+
+    def choose_action(self, view, rng):
+        """Walt's hint ladder: a new hint line (view["walt_line"]) is spoken before the player chooses."""
+        if view.get("walt_line"):
+            self.window.speak(view["walt_line"])
+        return super().choose_action(view, rng)
 
     def display_ghosts(self, view):
         if not view.get("victim"):
@@ -190,16 +198,24 @@ class StoryNarrator(PW.WindowNarrator):
         self.brain_name = brain_name
         self.night = night
         self.room_titles = []
+        self.chapter = NIGHT_STORY[night]
+        self.keepsakes = []                  # Night B: ids of the keepsakes picked up tonight
+        self.keepsakes_before = []           # Night C: keepsakes found in Night B (from the player's profile)
+        self.keepsake_state = None           # the keepsake on the current walk: None, "lying", "taken"
 
     def before_room(self, state, info):
         w = self.window
         beat = self.story.get(info["beat_id"])
         zone = C.ZONE_NAMES[state["zone"]]
         w.room_label = f"Night {self.night}  ·  Room {state['room_index'] + 1}/{state['rooms']}  ·  {zone}"
+        if self.chapter["fire"]:
+            w.fire_level = FIRE_GLOW_PER_ROOM * (state["room_index"] + 1)     # the park burns a bit more
+        self.walk_keepsake = keepsake_for_room(self.night, state["room_index"])
+        self.keepsake_state = "lying" if self.walk_keepsake else None
         w.is_finale = state["is_finale"]
         w.zone = state["zone"]
         w.help_mode = None if state["is_finale"] else state["help_mode"]
-        w.difficulty = "normal"
+        w.difficulty = state["difficulty"]                       # chosen by Walt's brain, never shown
         if state["zone"] != self.zone_seen:
             self.zone_card(state, beat)
             self.zone_seen = state["zone"]
@@ -215,21 +231,98 @@ class StoryNarrator(PW.WindowNarrator):
         if state["is_finale"]:
             self.flashback()
             w.bubble = ""
-            w.speak(PW.FINALE_START_LINE, ghost=True)
+            w.speak(w.finale_start, ghost=True)
         elif victim:
-            self.tell_about(victim)
+            self.tell_about(victim, state.get("coach"))
         else:
             w.bubble = PW.WALT_BUBBLE.get(w.help_mode, "")
 
-    def tell_about(self, victim):
-        """What Walt says when a victim appears. Silent Walt: nothing useful. Scripted Walt: the backstory
-        with the clue (and from now on the victim's name is shown)."""
+    def draw_walk(self, state, beat, walked, appear, stepping, moved):
+        """The normal walk, plus (Night B) a keepsake that glints on the ground halfway: press E while it is
+        near to pick it up. Walk past it and it is gone for tonight."""
+        super().draw_walk(state, beat, walked, appear, stepping, moved)
+        if self.keepsake_state != "lying":
+            return
+        if appear is not None:                   # the ghosts are here: walked past it, gone for tonight
+            self.keepsake_state = "missed"
+            return
+        w = self.window
+        c = w.canvas
+        x = int(700 - walked)                    # lies on the ground ahead and comes closer with the ground
+        glint = abs(math.sin(time.time() * 4))
+        PW.draw_glow(c, x, GROUND_Y - 6, 40, (255, 220, 140), strength=int(10 + 30 * glint))
+        pygame.draw.ellipse(c, (120, 90, 60), (x - 12, GROUND_Y - 12, 24, 12))
+        pygame.draw.circle(c, (255, 240, 200), (x + 4, GROUND_Y - 10), 2 + int(3 * glint))
+        near = x < 420
+        if near:
+            draw_text(c, "E  pick it up", w.font, COLORS["charge"], x, GROUND_Y - 60, center=True)
+        pressed = pygame.key.get_pressed()[pygame.K_e] or w.demo_dir is not None
+        if near and pressed:
+            self.keepsake_state = "taken"
+            self.keepsakes.append(self.walk_keepsake["id"])
+            w.sounds.play("win")
+            w.popup(f"Found: {self.walk_keepsake['name']}", COLORS["charge"], x, GROUND_Y - 90)
+            w.speak(self.walk_keepsake["memory"])
+
+    def flashback(self):
+        """At the gate. Night A: the clue rooms (as in the normal game). Night B: what each keepsake found
+        tonight reminds Walt of. Night C: the fire of 1987, one scene per keepsake found in Night B, a
+        burnt-out frame for each one that was missed, then the truth."""
+        kind = self.chapter["flashback"]
+        if kind == "clues":
+            super().flashback()
+            return
+        story = self.chapter
+        self.memory_scene(None, story["flashback_intro"])
+        if kind == "keepsakes":
+            if not self.keepsakes:
+                self.memory_scene(None, story["flashback_none"])
+                return
+            for keepsake_id in self.keepsakes:
+                keepsake = KEEPSAKE_BY_ID[keepsake_id]
+                self.memory_scene(keepsake["beat"], keepsake["memory"], style="keepsake")
+            self.memory_scene(None, story["flashback_end"])
+            return
+        for keepsake in KEEPSAKES:                                   # Night C, in the order of that night
+            if keepsake["id"] in self.keepsakes_before:
+                self.memory_scene(keepsake["beat"], keepsake["fire"], style="fire")
+            else:
+                self.memory_scene(None, story["flashback_missing"], style="burnt")
+        self.memory_scene(None, story["flashback_end"])
+
+    def think(self, work):
+        """Run work() (LLM Walt's decision, can take a few seconds) in a background thread while the
+        window keeps drawing: the last picture stays, with Walt's '...' thinking dots.
+        Output: whatever work() returned."""
+        w = self.window
+        result = {}
+
+        def run():
+            result["value"] = work()
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        frozen = w.canvas.copy()
+        while thread.is_alive():
+            w.tick()
+            w.canvas.blit(frozen, (0, 0))
+            dots = "." * (1 + int(time.time() * 3) % 3)
+            draw_text(w.canvas, f"Walt is thinking{dots}", w.font, COLORS["flashlight"], WIDTH // 2, HEIGHT - 70,
+                      center=True)
+            w.present(capture=False)
+        thread.join()
+        return result["value"]
+
+    def tell_about(self, victim, coach):
+        """What Walt says when a victim appears (hint level 1). Silent Walt: nothing useful. Scripted Walt:
+        the fixed life story. LLM Walt: the life story in his own words. From then on the name is shown."""
         w = self.window
         w.bubble = ""
-        if self.brain_name == "silent":
+        line = coach.opening_line() if coach is not None else None
+        if line is None:
             w.speak(SILENT_LINE)
             return
-        w.speak(VICTIMS[victim]["scripted"])
+        w.speak(line)
         self.policy.names_known.add(victim)
 
     def after_room(self, state, row):
@@ -267,8 +360,26 @@ def play_story_night(window, story, night, brain_name):
     policy = StoryPolicy(window, names_known)
     narrator = StoryNarrator(story, window, policy, brain_name, night)
     brain = BRAINS[brain_name]()
+    profile = load_profile(window.player_id)
+    brain.remember(profile)                                  # only LLM Walt uses it (part 3)
+    narrator.keepsakes_before = (profile or {}).get("keepsakes", [])
+    chapter = NIGHT_STORY[night]
+    window.walt_is_ghost = chapter["walt_is_ghost"]
+    window.gate_line, window.reveal_line = chapter["gate_line"], chapter["reveal_line"]
+    window.finale_start, window.farewell = chapter["finale_start"], chapter["farewell"]
+    window.true_ending = night == "C"
+    window.fire_level = 0
     seed = int(time.time()) % 1000000
-    rows = play_night(night, brain, policy, seed, narrator=narrator)
+    try:
+        rows = play_night(night, brain, policy, seed, narrator=narrator)
+    finally:
+        window.fire_level = 0                               # the ending scene and the menus do not burn
+        window.walt_is_ghost = False
+    for r in rows:                                          # Night B measure: keepsakes found tonight
+        r["keepsakes_found"] = len(narrator.keepsakes) if night == "B" else None
+    if window.demo_dir is None:                             # demo runs never change a player's profile
+        skill = brain.skill.estimate if hasattr(brain, "skill") else 0.0
+        update_profile(window.player_id, rows, skill, keepsakes=getattr(narrator, "keepsakes", None))
     window.last_result = narrator.last_result
     return rows, seed
 
