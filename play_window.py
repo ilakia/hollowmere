@@ -76,7 +76,7 @@ MEMORY_SECONDS = 6.0
 MEMORY_WAIT_MAX = 8.0            # wait at most this long for the line before (e.g. the gate line) to end
 MEMORY_SECONDS_MAX = 30.0
 # After the escape the player chooses: "The End" or "...or maybe not?" (= straight into the next night)
-NEXT_NIGHT = {None: "A", "A": "B", "B": "C"}
+NEXT_NIGHT = {None: "A", "A": "B", "B": "C", "C": "A"}     # after Night C the player comes back to Night A
 # Finale: ghost-Walt speaks in bubbles (and in his slow ghost voice)
 FINALE_START_LINE = "Now you know, kid. Let's finish this."
 FINALE_CHARGE_LINE = "Here comes the light!"
@@ -1343,25 +1343,21 @@ def main():
         paragraphs = [(ENDINGS[outcome], COLORS["text"])]
         if window.last_result:
             paragraphs.append((f"Last attraction: {window.last_result[0]}", COLORS[window.last_result[1]]))
-        next_night = NEXT_NIGHT.get(window.story_night) if outcome == "escaped" else None
-        if next_night is not None:          # escaped, and another night is waiting
+        if outcome == "escaped":            # "The End"... unless the player comes back the next night
+            next_night = NEXT_NIGHT[window.story_night]
             choice = window.card("The End?", paragraphs,
                                  choices=[("next", "...or maybe not?  [Space]", [pygame.K_SPACE, pygame.K_RETURN]),
-                                          ("again", "Title screen  [T]", [pygame.K_t]),
-                                          ("quit", "The End  [Q]", [pygame.K_q])])
-        else:                               # trapped, or the last night is over
-            title = "The End" if outcome == "escaped" else "Trapped"
-            choice = window.card(title, paragraphs,
-                                 choices=[("again", "Play again  [Space]", [pygame.K_SPACE, pygame.K_RETURN]),
-                                          ("quit", "Quit  [Q]", [pygame.K_q])])
+                                          ("menu", "The End  [Q]", [pygame.K_q])])
+        else:
+            choice = window.card("Trapped", paragraphs,
+                                 choices=[("menu", "Main menu  [Space]", [pygame.K_SPACE, pygame.K_RETURN])])
         if args.demo is not None:
             print(f"demo finished ({outcome}), screenshots in {args.demo}")
             break
-        if choice == "quit":
-            break
-        if choice == "next":
+        if choice == "next":                # straight into the next night, no title screen
             window.story_night = next_night
             window.next_night_now = True
+        # "menu": the loop starts the next game at the title screen (quit the game from there)
     pygame.quit()
 
 
