@@ -18,8 +18,10 @@ A narrator (the game window, or None for test players) can show the walk, the en
 LLM calls never stop the game window: they run in the background (Job) and Walt speaks when an answer is
 ready. For bots (no window) every call runs at once, so bot results stay repeatable.
 """
+import csv
 import random
 import threading
+from pathlib import Path
 
 import pandas as pd
 
@@ -31,8 +33,11 @@ from .risk import FEATURES, load_band_model, option_features
 from .skill import SkillEstimator, load_expected_table
 from .story import Story
 from .victims import NIGHTS, VICTIMS, play_victim_room
-from .walt_llm import (HINT_SYSTEM_PROMPT, STORY_SYSTEM_PROMPT, WALT_SYSTEM_PROMPT, WaltClient, check_answer,
-                       check_hint, check_story, hint_prompt, study1_room_index, walt_prompt)
+from .activities import (ACTIVITIES, DIFFICULTY_STEPS, HELP_ORDER, NIGHTS_WITH_ACTIVITIES, activity_band,
+                         play_activity)
+from .walt_llm import (ACTIVITY_SYSTEM_PROMPT, HINT_SYSTEM_PROMPT, STEP_IN_SYSTEM_PROMPT, STORY_SYSTEM_PROMPT,
+                       WALT_SYSTEM_PROMPT, WaltClient, activity_prompt, check_activity_answer, check_answer,
+                       check_hint, check_story, hint_prompt, step_in_prompt, study1_room_index, walt_prompt)
 
 LLM_SHORTLIST = 6              # same shortlist size as llm_risk in Study 1
 # Hint ladder (part 2). Levels: 0 nothing, 1 the life story, 2 a clearer nudge, 3 exactly what to do.
@@ -45,6 +50,82 @@ STORY_WAIT_LINE = "Wait... I know that face."           # LLM Walt, if his life 
 HELP_WAIT_LINE = "Let me think, kid..."
 BUSY_LINE = "Hang on, kid, I'm thinking."
 SAID_MEMORY = 3                          # LLM Walt is shown his last 3 sentences, so he does not repeat them
+ACTIVITY_TABLE = Path(__file__).with_name("expected_activity.csv")   # made by activity_check.py
+
+
+def load_skill_table():
+    """Study 1's expected-HP table for the fights plus the expected pressure of the activities (both are
+    'what an average player loses here'). Output: (table, fallback of the fight table alone, so the fights'
+    skill estimate works exactly as before)."""
+    table = dict(load_expected_table())
+    fallback = sum(table.values()) / len(table)
+    if ACTIVITY_TABLE.exists():
+        with open(ACTIVITY_TABLE, newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                table[(row["beat_id"], row["difficulty"], row["help_mode"])] = float(row["expected_hp_lost"])
+    return table, fallback
+
+
+def harder(difficulty, steps):
+    """Move the difficulty up (steps > 0) or down (steps < 0), within easy ... hard."""
+    index = DIFFICULTY_STEPS.index(difficulty) + steps
+    return DIFFICULTY_STEPS[max(0, min(2, index))]
+
+
+def stronger(activity_id, help_mode, steps):
+    """Move Walt's help one step stronger (steps > 0) or weaker, in the activity's help order."""
+    order = HELP_ORDER[activity_id]
+    index = order.index(help_mode) + steps
+    return order[max(0, min(len(order) - 1, index))]
+
+
+class ScriptedActivityCoach:
+    """Scripted Walt during an activity, at each checkpoint (fixed rules): 2+ mistakes since the last
+    checkpoint -> one step easier and one step more help; no mistakes -> one step less help, or one step
+    harder if he was already staying back; otherwise no change."""
+
+    def __init__(self, activity_id):
+        self.activity_id = activity_id
+        self.mistakes_before = 0
+
+    def step_in(self, view):
+        new_mistakes = view["mistakes"] - self.mistakes_before
+        self.mistakes_before = view["mistakes"]
+        if new_mistakes >= 2:
+            return {"difficulty": harder(view["difficulty"], -1),
+                    "help": stronger(self.activity_id, view["help"], 1)}
+        if new_mistakes == 0:
+            if view["help"] != "stay_back":
+                return {"difficulty": view["difficulty"], "help": stronger(self.activity_id, view["help"], -1)}
+            return {"difficulty": harder(view["difficulty"], 1), "help": "stay_back"}
+        return None
+
+
+class LLMActivityCoach:
+    """LLM Walt during an activity: at each checkpoint the model sees the progress and decides whether to
+    change the difficulty and/or his help. Invalid answers change nothing (counted as fallbacks)."""
+
+    def __init__(self, activity_id, brain):
+        self.spec = ACTIVITIES[activity_id]
+        self.brain = brain
+        self.fallbacks = 0
+        self.lines = []
+
+    def step_in(self, view):
+        answer = LLMBrain.client.ask(step_in_prompt(self.spec, view, self.brain.said[-SAID_MEMORY:]),
+                                     STEP_IN_SYSTEM_PROMPT, tag="|walt_step_in")
+        LLMBrain.client.save_cache()
+        difficulty, help_mode, say, dropped = check_activity_answer(answer, self.spec, self.brain.said)
+        if difficulty is None or help_mode is None:
+            self.fallbacks += 1
+            return None
+        unchanged = (difficulty, help_mode) == (view["difficulty"], view["help"])
+        if say is None and dropped == "does not fit the choice" and unchanged:
+            say = answer.get("say", "").strip() or None          # no change: any encouraging word is fine
+        if say:
+            self.brain.said.append(say)
+            self.lines.append(say)
+        return {"difficulty": difficulty, "help": help_mode, "say": say}
 
 
 class Job:
@@ -210,7 +291,13 @@ class SilentBrain:
     name = "silent"
 
     def decide(self, state):
+        if state.get("activity"):                         # activities: normal, Walt stays back
+            return {"difficulty": "normal", "help_mode": "stay_back", "say": None, "reason": "fixed",
+                    "source": "fixed"}
         return {"difficulty": "normal", "help_mode": "hint", "say": None, "reason": "fixed", "source": "fixed"}
+
+    def activity_coach(self, activity_id):
+        return None                                       # never steps in
 
     def coach(self, victim_id, background=False):
         return SilentCoach(victim_id)
@@ -230,10 +317,33 @@ class ScriptedBrain:
     name = "scripted"
 
     def __init__(self):
-        self.skill = SkillEstimator(load_expected_table())
+        table, fallback = load_skill_table()
+        self.skill = SkillEstimator(table)
+        self.skill.fallback = fallback
         self.died_last_room = False
 
+    def decide_activity(self, state):
+        """The same four situations as in the fights. Activities cannot kill, so a cruising player gets
+        'hard' here (in the fights 'hard' overshot in Study 1 and the rule stays at normal)."""
+        activity = state["activity"]
+        strongest = HELP_ORDER[activity][-1]
+        first_help = HELP_ORDER[activity][1]
+        if self.died_last_room or state["hp"] / state["max_hp"] < C.RULE_LOW_HP:
+            difficulty, help_mode, reason = "easy", strongest, "in danger"
+        elif self.skill.estimate > C.RULE_STRUGGLING:
+            difficulty, help_mode, reason = "easy", first_help, "struggling"
+        elif self.skill.estimate < -C.RULE_CRUISING:
+            difficulty, help_mode, reason = "hard", "stay_back", "cruising"
+        else:
+            difficulty, help_mode, reason = "normal", first_help, "about average"
+        return {"difficulty": difficulty, "help_mode": help_mode, "say": None, "reason": reason, "source": "rule"}
+
+    def activity_coach(self, activity_id):
+        return ScriptedActivityCoach(activity_id)
+
     def decide(self, state):
+        if state.get("activity"):
+            return self.decide_activity(state)
         if self.died_last_room or state["hp"] / state["max_hp"] < C.RULE_LOW_HP:
             difficulty, help_mode, reason = "easy", "heal", "in danger"
         elif self.skill.estimate > C.RULE_STRUGGLING:
@@ -251,7 +361,10 @@ class ScriptedBrain:
         pass                                               # no memory across nights
 
     def observe(self, state, row):
-        self.skill.update(row)
+        # victim fights depend on finding the trick, not on skill, and Study 1's table does not know them
+        # (bot check, 5 Nov: with them, beginners looked 'cruising' and got 'hard'); they are left out
+        if not row.get("victim"):
+            self.skill.update(row)
         self.died_last_room = row["deaths"] > 0
 
 
@@ -271,6 +384,7 @@ class LLMBrain(ScriptedBrain):
         self.last_hp_lost = 0.0
         self.last_band = None
         self.memory = ""                   # filled by remember() for a returning player
+        self.skill.fallback = load_skill_table()[1]
         self.said = []                     # his sentences tonight (so he does not repeat himself)
 
     def coach(self, victim_id, background=False):
@@ -304,7 +418,37 @@ class LLMBrain(ScriptedBrain):
         options.sort(key=lambda o: o["in_band"], reverse=True)
         return options
 
+    def activity_coach(self, activity_id):
+        return LLMActivityCoach(activity_id, self)
+
+    def recent_results(self, state):
+        """The last three results as short texts for the activity prompt."""
+        texts = []
+        for row in state["history"][-3:]:
+            kind = "challenge" if row.get("activity") else "fight"
+            texts.append(f"{kind}: {row['band'].replace('_', ' ')}")
+        return texts
+
+    def decide_activity(self, state):
+        """No prediction model for activities: the LLM decides from the situation alone."""
+        fallback = ScriptedBrain.decide_activity(self, state)
+        spec = ACTIVITIES[state["activity"]]
+        prompt = activity_prompt(spec, state["hp"], state["max_hp"], self.skill.estimate, self.recent_results(state),
+                                 self.memory, self.said[-SAID_MEMORY:])
+        answer = LLMBrain.client.ask(prompt, ACTIVITY_SYSTEM_PROMPT, tag="|walt_activity")
+        LLMBrain.client.save_cache()
+        difficulty, help_mode, say, dropped = check_activity_answer(answer, spec, self.said)
+        if difficulty is None or help_mode is None:
+            fallback["source"] = "fallback"
+            return fallback
+        if say:
+            self.said.append(say)
+        return {"difficulty": difficulty, "help_mode": help_mode, "say": say, "reason": dropped,
+                "source": "llm" if say else "llm_line_dropped"}
+
     def decide(self, state):
+        if state.get("activity"):
+            return self.decide_activity(state)
         fallback = super().decide(state)
         shortlist = self.score_options(state)[:LLM_SHORTLIST]
         prompt = walt_prompt(state["night"], state["room_index"], state["rooms"], state["hp"], state["max_hp"],
@@ -312,14 +456,15 @@ class LLMBrain(ScriptedBrain):
                              state["walt_is_enemy"], self.memory, self.said[-SAID_MEMORY:])
         answer = LLMBrain.client.ask(prompt, WALT_SYSTEM_PROMPT, tag="|walt")
         LLMBrain.client.save_cache()
-        option, say = check_answer(answer, shortlist)
+        option, say, dropped = check_answer(answer, shortlist, self.said)
         if option is None:
             fallback["source"] = "fallback"
             return fallback
         if say:
             self.said.append(say)
+        # without an accepted sentence the window shows scripted Walt's line for the chosen help
         return {"difficulty": option["difficulty"], "help_mode": option["help_mode"], "say": say,
-                "reason": "", "source": "llm" if say else "llm_no_line"}
+                "reason": dropped, "source": "llm" if say else "llm_line_dropped"}
 
     def observe(self, state, row):
         super().observe(state, row)
@@ -345,24 +490,26 @@ def room_info(room):
     return {"beat_id": room, "victim": None}
 
 
-def play_night(night, brain, policy, seed, narrator=None):
+def play_night(night, brain, policy, seed, narrator=None, with_activities=False):
     """Play one night. Output: list of room rows (normal rooms have the Study 1 columns, victim rooms add
-    the Study 2 measures)."""
+    the Study 2 measures, activities their own). with_activities=True uses the new night plan with two
+    activities instead of two fights (NIGHTS_WITH_ACTIVITIES; bots only until the window can show them)."""
     story = Story()
     rng = random.Random(f"story-{night}-{seed}")
     player = PlayerState()
-    rooms = NIGHTS[night]
+    rooms = NIGHTS_WITH_ACTIVITIES[night] if with_activities else NIGHTS[night]
     history = []
     background = narrator is not None and getattr(narrator, "background_llm", False)
     coaches = {room: brain.coach(room, background) for room in rooms if room in VICTIMS}
     walt_at_gate = NIGHT_STORY[night]["finale_enemy"] == "walt"      # Night A: Walt is the last enemy
     for index, room in enumerate(rooms):
         info = room_info(room)
-        beat = story.get(info["beat_id"])
+        activity = room if room in ACTIVITIES else None
+        beat = {"zone": ACTIVITIES[room]["zone"], "id": room} if activity else story.get(info["beat_id"])
         is_finale = info["beat_id"] == "finale_gate"
         state = {"night": night, "room_index": index, "rooms": len(rooms), "zone": beat["zone"],
                  "is_finale": is_finale, "walt_is_enemy": is_finale and walt_at_gate,
-                 "victim": info["victim"], "beat_id": info["beat_id"],
+                 "victim": info["victim"], "beat_id": info["beat_id"], "activity": activity,
                  "hp": player.hp, "max_hp": C.PLAYER_MAX_HP, "potions": player.potions,
                  "deaths_total": player.deaths_total, "history": history,
                  "coach": coaches.get(info["victim"])}
@@ -373,8 +520,9 @@ def play_night(night, brain, policy, seed, narrator=None):
             """Walt's decision for this room, checked, and written into the state."""
             decision = brain.decide(state)
             help_mode = C.FINALE_HELP_MODE if state["walt_is_enemy"] else decision.get("help_mode")
-            if help_mode not in C.HELP_MODES and not state["walt_is_enemy"]:
-                help_mode = "hint"                                     # anything invalid: safe default
+            allowed = ACTIVITIES[state["activity"]]["help"] if state["activity"] else C.HELP_MODES
+            if help_mode not in allowed and not state["walt_is_enemy"]:
+                help_mode = "stay_back" if state["activity"] else "hint"   # anything invalid: safe default
             difficulty = decision.get("difficulty")
             if difficulty not in C.DIFFICULTY:
                 difficulty = "normal"
@@ -394,7 +542,12 @@ def play_night(night, brain, policy, seed, narrator=None):
                 narrator.before_room(state, info)
         help_mode, difficulty = decision["help_mode"], decision["difficulty"]
         coach = state["coach"]
-        if info["victim"]:
+        if activity:
+            activity_coach = brain.activity_coach(activity)
+            t = play_activity(player, activity, difficulty, help_mode, policy, rng, activity_coach)
+            t["coach_fallbacks"] = getattr(activity_coach, "fallbacks", 0)
+            t["step_in_lines"] = " / ".join(getattr(activity_coach, "lines", []))
+        elif info["victim"]:
             t = play_victim_room(player, info["victim"], help_mode, policy, rng, difficulty, coach)
             t["coach_fallbacks"] = coach.fallbacks
         else:
@@ -405,6 +558,8 @@ def play_night(night, brain, policy, seed, narrator=None):
                "decision_source": decision.get("source"), "walt_reason": decision.get("reason"),
                "walt_say": decision.get("say"), **t,
                "hp_lost_ratio": round(hp_lost_ratio(t), 4), "band": band_position(t)}
+        if activity:            # activities: the band and the skill estimate use the pressure (see activities.py)
+            row.update({"beat_id": activity, "hp_lost_ratio": t["pressure"], "band": activity_band(t)})
         row["in_band"] = row["band"] == "in_band"
         if client:                                                     # model calls in this room (decision + hints)
             row["llm_calls"] = client.calls - calls_before[0]

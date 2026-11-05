@@ -85,8 +85,11 @@ Prefer options with a high in-band chance and a low too-hard chance.
 
 Answer ONLY with JSON: {"option": <number of the option>, "say": "..."}
 - say: ONE short sentence (at most 15 words) that you say to the player before the room, in your voice:
-  gruff, warm, a bit old-fashioned, calls the player "kid". Say how you will help (or that you stay back).
-  Never mention difficulty, numbers, percentages or the options. Never repeat a line you already said."""
+  gruff, warm, a bit old-fashioned, calls the player "kid". Say clearly HOW you will help in the option
+  you chose: stay_back = you stay back and let them handle it, hint = you give tips and warnings,
+  heal = you will patch them up, fight = you fight beside them.
+  Never mention difficulty, numbers, percentages or the options, never use the option names themselves,
+  and never repeat a line you already said."""
 
 FINALE_NOTE = ("This is the FINALE: the player fights YOU at the gate, so you do not help (help_mode none). "
                "The best ending is a close fight the player can win, so choose by the numbers.")
@@ -122,10 +125,47 @@ def walt_prompt(night, room_index, rooms, hp, max_hp, potions, skill_estimate, l
     return "\n".join(lines)
 
 
-def check_answer(answer, options):
+# Pilot (5 Nov): LLM Walt repeated himself and sometimes said one thing ("a nudge") while choosing another
+# (heal), once even the internal name "stay_back". A sentence is now only used if it fits his choice.
+HELP_WORDS = {
+    "stay_back": ["stay back", "hang back", "on your own", "your fight", "watch", "let you", "yours",
+                  "all you", "myself out", "sit this", "step aside"],
+    "hint": ["nudge", "tip", "hint", "warn", "aim", "eye out", "eyes open", "pointer", "tell you", "shout",
+             "look out", "watch for"],
+    "heal": ["heal", "patch", "fix you", "mend", "bandage", "hurt", "wounds", "back on your feet", "doctor"],
+    "fight": ["fight", "wrench", "swing", "hit", "side by side", "with you", "together", "beside you",
+              "give 'em", "knock"],
+}
+SIMILAR_LIMIT = 0.6         # a sentence sharing more than 60% of its words with an earlier one is a repeat
+
+
+def word_set(text):
+    return {w.strip(".,!?'\"").lower() for w in text.split() if w.strip(".,!?'\"")}
+
+
+def is_repeat(say, said):
+    """True if say is (nearly) the same as a sentence Walt already said tonight (shared words / all words)."""
+    words = word_set(say)
+    for old in said:
+        other = word_set(old)
+        if words and len(words & other) / len(words | other) > SIMILAR_LIMIT:
+            return True
+    return False
+
+
+def fits_help(say, help_mode):
+    """True if the sentence talks about the help Walt actually chose (finale: help 'none', anything goes)."""
+    if help_mode not in HELP_WORDS:
+        return True
+    low = say.lower()
+    return any(word in low for word in HELP_WORDS[help_mode])
+
+
+def check_answer(answer, options, said=()):
     """Validate the model's answer.
-    Inputs: the parsed JSON (dict, {} if it failed) and the options it could choose from
-    Output: (chosen option dict or None, the sentence to say or None)"""
+    Inputs: the parsed JSON (dict, {} if it failed), the options it could choose from, and the sentences
+            Walt already said tonight
+    Output: (chosen option dict or None, the sentence to say or None, why the sentence was dropped or "")"""
     option = None
     number = answer.get("option")
     if isinstance(number, str) and number.strip().isdigit():
@@ -134,14 +174,17 @@ def check_answer(answer, options):
         option = options[number - 1]
     say = answer.get("say")
     if not isinstance(say, str) or not say.strip():
-        say = None
-    else:
-        say = say.strip()
-        too_long = len(say.split()) > SAY_MAX_WORDS
-        leaks = any(ch.isdigit() for ch in say) or "%" in say or "difficult" in say.lower()
-        if too_long or leaks:
-            say = None                   # the sentence breaks the rules: Walt says his scripted line instead
-    return option, say
+        return option, None, "no sentence"
+    say = say.strip()
+    if len(say.split()) > SAY_MAX_WORDS:
+        return option, None, "too long"
+    if any(ch.isdigit() for ch in say) or "%" in say or "difficult" in say.lower() or "_" in say:
+        return option, None, "game words"                 # numbers, difficulty, internal names like stay_back
+    if option is not None and not fits_help(say, option["help_mode"]):
+        return option, None, "does not fit the choice"
+    if is_repeat(say, said):
+        return option, None, "repeat"
+    return option, say, ""
 
 
 def study1_room_index(room_index, rooms):
@@ -216,3 +259,77 @@ def check_story(answer, victim):
     if not any(word in low for word in victim["clue_words"]) or any(word in low for word in GAME_WORDS):
         return None
     return say.strip()
+
+
+# ---------- Activities: LLM Walt decides on his own judgement (there is no prediction model here) ----------
+ACTIVITY_SYSTEM_PROMPT = """You are Walt, an old park mechanic who died in the 1987 fire at Hollowmere Park.
+You are the companion of a player who is getting through the haunted park tonight. Next comes a short
+challenge. You secretly choose how hard it is and how you help. The player never sees the difficulty.
+GOAL: the player should just about make it: win while using between 30% and 70% of their allowed mistakes.
+Too easy is boring, failing or nearly failing is frustrating.
+Difficulty: easy = clearly easier for everyone, normal, hard = clearly harder (good for strong players).
+A weak player usually needs easy and/or your help; a strong player needs hard and no help.
+The skill estimate compares the player with an average player: positive = struggling, negative = cruising.
+Answer ONLY with JSON: {"difficulty": "easy|normal|hard", "help": "<one of the listed ways to help>", "say": "..."}
+- say: ONE short sentence (at most 15 words) to the player, gruff and warm, call them "kid". Say clearly how
+  you will help (or that you stay back). Never mention difficulty, numbers, or the option names."""
+
+STEP_IN_SYSTEM_PROMPT = """You are Walt, an old park mechanic who died in the 1987 fire at Hollowmere Park.
+Your companion, the player, is in the middle of a challenge. You may step in: change how hard the rest is
+and/or how you help. GOAL: they should just about make it, using between 30% and 70% of their allowed
+mistakes. If they are close to failing, make it easier or help more. If they make no mistakes, make it
+harder or help less. If it is going about right, change nothing.
+Answer ONLY with JSON: {"difficulty": "easy|normal|hard", "help": "<one of the listed ways to help>", "say": "..."}
+(keep both the same to change nothing; then say an encouraging word)
+- say: ONE short sentence (at most 15 words), gruff and warm, call them "kid". Never mention numbers or option names."""
+
+
+def activity_options_text(spec):
+    return "\n".join(f"- {name}: {text}" for name, text in spec["help_text"].items())
+
+
+def activity_prompt(spec, hp, max_hp, skill_estimate, recent, memory="", said=()):
+    """Before an activity. recent = list of short texts about the last results. Rounded for the cache."""
+    lines = [f"The challenge: {spec['title']}. {spec['what']}",
+             f"They must succeed {spec['goal']} times and may make {spec['budget']} mistakes.",
+             "Ways you can help:", activity_options_text(spec),
+             f"Player HP: {round_to(hp, 10):.0f} of {max_hp}.",
+             f"Skill estimate: {round_to(skill_estimate, 0.05):+.2f} (positive = struggling, negative = cruising).",
+             "Recent results: " + ("; ".join(recent) if recent else "none yet") + "."]
+    if memory:
+        lines.append(memory)
+    if said:
+        lines.append("Lines you already said tonight (say something new): " + " / ".join(said))
+    return "\n".join(lines)
+
+
+def step_in_prompt(spec, view, said=()):
+    """At a checkpoint during an activity."""
+    lines = [f"The challenge: {spec['title']}. {spec['what']}",
+             f"Progress: {view['progress']} of {view['goal']} successes. Mistakes: {view['mistakes']} of "
+             f"{view['budget']} allowed.",
+             f"Right now: difficulty {view['difficulty']}, your help: {view['help']}.",
+             "Ways you can help:", activity_options_text(spec)]
+    if said:
+        lines.append("Lines you already said tonight (say something new): " + " / ".join(said))
+    return "\n".join(lines)
+
+
+def check_activity_answer(answer, spec, said=()):
+    """Validate an activity decision. Output: (difficulty or None, help or None, sentence or None, why dropped)."""
+    difficulty = answer.get("difficulty") if answer.get("difficulty") in ("easy", "normal", "hard") else None
+    help_mode = answer.get("help") if answer.get("help") in spec["help"] else None
+    say = answer.get("say")
+    if difficulty is None or help_mode is None:
+        return difficulty, help_mode, None, "invalid choice"
+    if not isinstance(say, str) or not say.strip():
+        return difficulty, help_mode, None, "no sentence"
+    say = say.strip()
+    low = say.lower()
+    if len(say.split()) > SAY_MAX_WORDS or any(ch.isdigit() for ch in say) or "_" in say or "difficult" in low:
+        return difficulty, help_mode, None, "game words"
+    if not any(word in low for word in spec["words"][help_mode]):
+        return difficulty, help_mode, None, "does not fit the choice"
+    if is_repeat(say, said):
+        return difficulty, help_mode, None, "repeat"
+    return difficulty, help_mode, say, ""

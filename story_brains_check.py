@@ -55,6 +55,8 @@ def main():
     ap.add_argument("--brains", nargs="+", default=["silent", "scripted"], choices=list(BRAINS))
     ap.add_argument("--games", type=int, default=100, help="nights per night x bot type x naive/smart")
     ap.add_argument("--nights", nargs="+", default=list(NIGHTS), choices=list(NIGHTS))
+    ap.add_argument("--activities", action="store_true", help="the new night plan with two activities per night")
+    ap.add_argument("--out", default=None, help="save all rows to this CSV (for a closer look)")
     ap.add_argument("--first-seed", type=int, default=300000, help="Study 2 bot seeds start at 300000")
     args = ap.parse_args()
     rows = []
@@ -64,12 +66,15 @@ def main():
                 for kind, cls in (("naive", Bot), ("listen", ListeningBot), ("smart", SmartBot)):
                     for seed in range(args.first_seed, args.first_seed + args.games):
                         bot = cls(profile, random.Random(f"bot-{profile}-{seed}"))
-                        night_rows = play_night(night, BRAINS[brain_name](), bot, seed)
+                        night_rows = play_night(night, BRAINS[brain_name](), bot, seed,
+                                                with_activities=args.activities)
                         for r in night_rows:
                             r.update({"bot_type": profile, "player": kind})
                         rows.extend(night_rows)
             print(f"  {brain_name}: night {night} done")
     df = pd.DataFrame(rows)
+    if args.out:
+        df.to_csv(args.out, index=False)
     df["too_hard"] = df["band"] == "too_hard"
     df["too_easy"] = df["band"] == "too_easy"
     df["escaped"] = df["run_outcome"] == "escaped"
@@ -88,6 +93,21 @@ def main():
         print(hints)
         print("\nHow often each Walt chose each difficulty:")
         print(choices)
+        if "activity" in df and df["activity"].notna().any():
+            acts = df[df["activity"].notna()].copy()
+            acts["too_hard"] = acts["band"] == "too_hard"
+            acts["too_easy"] = acts["band"] == "too_easy"
+            print("\nACTIVITIES, per Walt version and player type:")
+            print(acts.groupby(["companion", "player"]).agg(in_band=("in_band", "mean"), too_hard=("too_hard", "mean"),
+                                                           too_easy=("too_easy", "mean"), won=("cleared", "mean"),
+                                                           step_ins=("step_ins", "mean")))
+            print("\nACTIVITIES, in band per Walt version and bot type (all player types):")
+            print(acts.pivot_table(index="companion", columns="bot_type", values="in_band"))
+            print("\nACTIVITIES, start difficulty chosen per bot type:")
+            print(pd.crosstab([acts["companion"], acts["bot_type"]], acts["start_difficulty"], normalize="index"))
+            fights = df[df["activity"].isna() & df["victim"].isna() & ~df["is_finale"].astype(bool)]
+            print("\nNORMAL FIGHTS only, in band per Walt version:")
+            print(fights.groupby("companion")["in_band"].mean())
         if "decision_source" in df:
             print("\nWhere the decisions came from:")
             print(df.groupby("companion")["decision_source"].value_counts(normalize=True).round(2))
