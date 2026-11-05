@@ -13,6 +13,7 @@ import time
 import pygame
 
 from .art import HEIGHT, WIDTH
+from .scenery_nights import NIGHT_MOODS, night_layers
 
 GROUND_Y = 385
 MARGIN = 210            # layers are wider than the screen (1380 px = 6 stalls of 230 px, so they repeat seamlessly)
@@ -31,6 +32,7 @@ ZONE_MOODS = {
         "mid": (26, 50, 48), "accent": (130, 255, 190), "accent2": (220, 255, 230), "ground": (40, 58, 54),
         "light": (180, 255, 210), "fog": (190, 240, 215), "sign": "EXIT"},
 }
+ZONE_MOODS.update(NIGHT_MOODS)                      # zone 5 = the Lakeside (Night B), 6 = June 1987 (Night C)
 LAMP_Y = 230
 LAMP_SPACING = 820                                 # a lamppost every 820 px of park (foreground, moves fastest)
 
@@ -147,6 +149,9 @@ class Scenery:
         self.layers = {}
         for zone, mood in ZONE_MOODS.items():
             sky = gradient((WIDTH, HEIGHT), *mood["sky"])
+            if zone in NIGHT_MOODS:                      # the story nights have their own places
+                self.layers[zone] = (sky,) + night_layers(zone)
+                continue
             self.layers[zone] = (sky, make_far_layer(zone, mood), make_mid_layer(zone, mood, sign_font),
                                  make_ground(mood))
         self.stars = [(random.Random(i).randrange(WIDTH), random.Random(i + 99).randrange(230)) for i in range(80)]
@@ -203,12 +208,13 @@ class Scenery:
         cam = self.camera()
         surface.blit(sky, (0, 0))
         now = time.time()
-        for i, (x, y) in enumerate(self.stars):
-            b = 150 + int(100 * (0.5 + 0.5 * math.sin(now * (1 + i % 5) + i)))
-            surface.set_at((x, y), (b, b, b))
-        moon_x = 140 - int(cam * 0.05)
-        pygame.draw.circle(surface, (240, 236, 210), (moon_x, 92), 36)
-        pygame.draw.circle(surface, mood["sky"][0], (moon_x + 15, 83), 31)
+        if zone != 6:                                        # June 1987: smoke hides the stars and the moon
+            for i, (x, y) in enumerate(self.stars):
+                b = 150 + int(100 * (0.5 + 0.5 * math.sin(now * (1 + i % 5) + i)))
+                surface.set_at((x, y), (b, b, b))
+            moon_x = 140 - int(cam * 0.05)
+            pygame.draw.circle(surface, (240, 236, 210), (moon_x, 92), 36)
+            pygame.draw.circle(surface, mood["sky"][0], (moon_x + 15, 83), 31)
         tile(surface, far, cam * 0.25, 0)                    # far rides move slowly ...
         tile(surface, mid, cam * 0.55, 0)                    # ... stalls a bit faster ...
         tile(surface, ground, cam * 0.8, GROUND_Y)           # ... the ground almost with the player

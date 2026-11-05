@@ -16,7 +16,9 @@ import pygame
 
 import play_window as PW
 from game import config as C
-from game.chapters import FIRE_GLOW_PER_ROOM, KEEPSAKE_BY_ID, KEEPSAKES, NIGHT_STORY, keepsake_for_room
+from game.chapters import (FIRE_GLOW_PER_ROOM, KEEPSAKE_BY_ID, KEEPSAKES, NIGHT_STORY, NIGHT_ZONE, ROOM_SKINS,
+                           keepsake_for_room)
+from window.scenery import ZONE_MOODS
 from game.profiles import load_profile, update_profile
 from game.story_mode import BRAINS, play_night
 from game.victims import BENNY_MUSIC_TURNS, NIGHTS, VICTIMS
@@ -29,6 +31,9 @@ SPRITE_VICTIM = {"martha": "martha", "benny": "benny", "rosa": "rosa", "henry": 
                  "lily_reflection": "twins", "ned": "ned"}
 SILENT_LINE = "Careful, kid. Something's here."
 FINALE_NAMES = {"smoke": "The Smoke", "blaze": "The Blaze"}
+for _skins in ROOM_SKINS.values():                    # the short story shown while walking to each new place
+    for _piece, _title, _story in _skins.values():
+        PW.PLACE_STORIES[_piece] = _story
 
 
 def draw_music_box(c, w, x, y, playing, turns_left=0):
@@ -279,21 +284,26 @@ class StoryNarrator(PW.WindowNarrator):
     def before_room(self, state, info):
         w = self.window
         beat = self.story.get(info["beat_id"])
-        zone = C.ZONE_NAMES[state["zone"]]
+        skin = ROOM_SKINS.get(self.night, {}).get(info["beat_id"])       # Night B / C: a new place
+        place_zone = NIGHT_ZONE.get(self.night, state["zone"])
+        zone = ZONE_MOODS[place_zone]["name"]
         w.room_label = f"Night {self.night}  ·  Room {state['room_index'] + 1}/{state['rooms']}  ·  {zone}"
         if self.chapter["fire"]:
             w.fire_level = FIRE_GLOW_PER_ROOM * (state["room_index"] + 1)     # the park burns a bit more
         self.walk_keepsake = keepsake_for_room(self.night, state["room_index"])
         self.keepsake_state = "lying" if self.walk_keepsake else None
         w.is_finale = self.walt_is_enemy(state)                  # B / C: Walt stays at your side at the gate
-        w.zone = state["zone"]
+        w.zone = place_zone
         w.help_mode = self.last_mode                             # unknown until Walt has decided
         if state["zone"] != self.zone_seen:
-            self.zone_card(state, beat)
+            if skin is None:                                     # Night A: the park map card per zone
+                self.zone_card(state, beat)
             self.zone_seen = state["zone"]
             self.zone_titles = []
             w.scenery.world_x = 0.0
         shown = dict(beat)
+        if skin is not None:
+            shown["id"], shown["title"] = skin[0], skin[1]
         victim = info["victim"]
         if victim == "twins":
             shown["enemies"] = ["lily", "lily_reflection"]

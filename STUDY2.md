@@ -52,6 +52,14 @@ Walt's travel lines in B and C now belong to the story of that night, so the roo
 Each night has 7 rooms: 4 normal rooms, 2 victim rooms, the finale (`game/victims.py`, NIGHTS). The story
 text lives in `game/chapters.py`.
 
+**New places for Night B and C** (`game/chapters.py`, ROOM_SKINS; drawn in `window/pieces_lake.py`,
+`window/pieces_1987.py`, backgrounds in `window/scenery_nights.py`): Night B plays at **the Lakeside**
+(Bumper Cars, Rosa's Photo Pier, Swan Boats, Lily's Mirror Maze, Bandstand, Wild Mouse Coaster, the Lake
+Gate), Night C in **June 1987**, the burning park (Benny's Carousel, Main Street, the Great Henry's Stage,
+Helter Skelter, Food Court, Walt's Workshop, the Main Gate). Each new room keeps the fight of the room it
+replaces (same ghosts, threat and beat id in the data), so the difficulty tables, the band rule and the bot
+checks are unchanged; only the place and its look are new.
+
 **Design consequence:** because the nights tell one story, the night order is the same for everyone
 (A, B, C). Only the **Walt version is rotated** over the three nights, using all 6 orders
 (`game/playtest.py`), so every version is played equally often as 1st, 2nd and 3rd night:

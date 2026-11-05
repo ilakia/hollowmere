@@ -13,6 +13,8 @@ import pygame
 
 from .pieces_z1 import carousel, cotton_candy, ferris_base, photo_booth, ring_toss, ticket_booth
 from .pieces_z2 import barrel_tunnel, clown_alley, hall_of_mirrors, puppet_theater, tilted_room
+from .pieces_1987 import FIRE_PIECES
+from .pieces_lake import LAKE_PIECES
 from .pieces_z3 import exit_gate, ghost_train, haunted_manor, log_flume, tunnel_boats, wax_museum, workshop
 
 GROUND_Y = 385
@@ -91,6 +93,8 @@ SET_PIECES = {
     "z3_log_flume": log_flume, "z3_wax_museum": wax_museum, "z3_workshop": workshop,
     "finale_gate": exit_gate,
 }
+SET_PIECES.update(LAKE_PIECES)          # Night B, the Lakeside
+SET_PIECES.update(FIRE_PIECES)          # Night C, June 1987
 
 
 def draw_set_piece(surface, beat_id, cx, ctx, font):
