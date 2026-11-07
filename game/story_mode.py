@@ -33,10 +33,12 @@ from .risk import FEATURES, load_band_model, option_features
 from .skill import SkillEstimator, load_expected_table
 from .story import Story
 from .victims import NIGHTS, VICTIMS, play_victim_room
+from .activity_risk import ACTIVITY_FEATURES, activity_features, load_activity_model
 from .activities import (ACTIVITIES, DIFFICULTY_STEPS, HELP_ORDER, NIGHTS_WITH_ACTIVITIES, activity_band,
                          play_activity)
 from .walt_llm import (ACTIVITY_SYSTEM_PROMPT, HINT_SYSTEM_PROMPT, STEP_IN_SYSTEM_PROMPT, STORY_SYSTEM_PROMPT,
-                       WALT_SYSTEM_PROMPT, WaltClient, activity_prompt, check_activity_answer, check_answer,
+                       WALT_SYSTEM_PROMPT, WaltClient, activity_prompt, check_activity_answer,
+                       check_activity_option, check_answer,
                        check_hint, check_story, hint_prompt, step_in_prompt, study1_room_index, walt_prompt)
 
 LLM_SHORTLIST = 6              # same shortlist size as llm_risk in Study 1
@@ -113,7 +115,7 @@ class LLMActivityCoach:
 
     def step_in(self, view):
         answer = LLMBrain.client.ask(step_in_prompt(self.spec, view, self.brain.said[-SAID_MEMORY:]),
-                                     STEP_IN_SYSTEM_PROMPT, tag="|walt_step_in")
+                                     STEP_IN_SYSTEM_PROMPT, tag="|walt_step_in2")
         LLMBrain.client.save_cache()
         difficulty, help_mode, say, dropped = check_activity_answer(answer, self.spec, self.brain.said)
         if difficulty is None or help_mode is None:
@@ -429,21 +431,42 @@ class LLMBrain(ScriptedBrain):
             texts.append(f"{kind}: {row['band'].replace('_', ' ')}")
         return texts
 
+    def score_activity(self, state):
+        """Every (difficulty, help) option of this activity, scored by the activity band model for this
+        player (game/activity_risk.py). Output: list of options, best in-band chance first."""
+        activity = state["activity"]
+        last = state["history"][-1]["hp_lost_ratio"] if state["history"] else 0.0
+        options, rows = [], []
+        for difficulty in DIFFICULTY_STEPS:
+            for help_mode in ACTIVITIES[activity]["help"]:
+                rows.append(activity_features(activity, difficulty, help_mode, self.skill.estimate, state["hp"],
+                                              last, self.skill.table, self.skill.fallback))
+                options.append({"difficulty": difficulty, "help": help_mode})
+        model = load_activity_model()
+        probabilities = model.predict_proba(pd.DataFrame(rows, columns=ACTIVITY_FEATURES))
+        classes = list(model.classes_)
+        for option, p in zip(options, probabilities):
+            for band in ["in_band", "too_easy", "too_hard"]:
+                option[band] = p[classes.index(band)]
+        options.sort(key=lambda o: o["in_band"], reverse=True)
+        return options
+
     def decide_activity(self, state):
-        """No prediction model for activities: the LLM decides from the situation alone."""
+        """As llm_risk in the fights: the model picks from the best scored options and says one sentence."""
         fallback = ScriptedBrain.decide_activity(self, state)
         spec = ACTIVITIES[state["activity"]]
+        shortlist = self.score_activity(state)[:LLM_SHORTLIST]
         prompt = activity_prompt(spec, state["hp"], state["max_hp"], self.skill.estimate, self.recent_results(state),
-                                 self.memory, self.said[-SAID_MEMORY:])
-        answer = LLMBrain.client.ask(prompt, ACTIVITY_SYSTEM_PROMPT, tag="|walt_activity")
+                                 shortlist, self.memory, self.said[-SAID_MEMORY:])
+        answer = LLMBrain.client.ask(prompt, ACTIVITY_SYSTEM_PROMPT, tag="|walt_activity2")
         LLMBrain.client.save_cache()
-        difficulty, help_mode, say, dropped = check_activity_answer(answer, spec, self.said)
-        if difficulty is None or help_mode is None:
+        option, say, dropped = check_activity_option(answer, shortlist, spec, self.said)
+        if option is None:
             fallback["source"] = "fallback"
             return fallback
         if say:
             self.said.append(say)
-        return {"difficulty": difficulty, "help_mode": help_mode, "say": say, "reason": dropped,
+        return {"difficulty": option["difficulty"], "help_mode": option["help"], "say": say, "reason": dropped,
                 "source": "llm" if say else "llm_line_dropped"}
 
     def decide(self, state):
@@ -472,7 +495,62 @@ class LLMBrain(ScriptedBrain):
         self.last_band = row["band"]
 
 
+class RandomBrain(ScriptedBrain):
+    """NOT a Walt version: picks difficulty and help at random (and never steps in), to collect training
+    data for the activity band model whose choices do not depend on the player (as Study 1's random
+    director did for the fights). Keeps a skill estimate so the data has the same features Walt sees."""
+    name = "random"
+
+    def __init__(self, rng=None):
+        super().__init__()
+        self.rng = rng or random.Random(0)
+
+    def decide(self, state):
+        if state.get("activity"):
+            helps = list(ACTIVITIES[state["activity"]]["help"])
+        else:
+            helps = C.HELP_MODES
+        return {"difficulty": self.rng.choice(DIFFICULTY_STEPS), "help_mode": self.rng.choice(helps),
+                "say": None, "reason": "random", "source": "random"}
+
+    def activity_coach(self, activity_id):
+        return None
+
+
+class PredictorBrain(LLMBrain):
+    """NOT a Walt version: the ablation from Study 1 without the language model. Always takes the best
+    scored option (fights and activities) and steps in with scripted Walt's rules. Shows how much of LLM
+    Walt's result comes from the numbers and how much from the LLM's own choices. No Ollama needed."""
+    name = "predictor"
+
+    def __init__(self):
+        ScriptedBrain.__init__(self)
+        self.band_model = load_band_model()
+        self.table = load_expected_table()
+        self.last_hp_lost, self.last_band, self.memory, self.said = 0.0, None, "", []
+
+    def decide(self, state):
+        if state.get("activity"):
+            best = self.score_activity(state)[0]
+            return {"difficulty": best["difficulty"], "help_mode": best["help"], "say": None,
+                    "reason": "best predicted", "source": "predictor"}
+        if state["walt_is_enemy"]:
+            options = self.score_options(state)
+        else:
+            options = self.score_options(state)
+        best = options[0]
+        return {"difficulty": best["difficulty"], "help_mode": best["help_mode"], "say": None,
+                "reason": "best predicted", "source": "predictor"}
+
+    def activity_coach(self, activity_id):
+        return ScriptedActivityCoach(activity_id)
+
+    def coach(self, victim_id, background=False):
+        return ScriptedCoach(victim_id)
+
+
 BRAINS = {b.name: b for b in [SilentBrain, ScriptedBrain, LLMBrain]}
+DATA_BRAINS = {"random": RandomBrain, "predictor": PredictorBrain}   # never in the game
 
 
 def warm_up_llm():
@@ -530,6 +608,8 @@ def play_night(night, brain, policy, seed, narrator=None, with_activities=False)
             state.update({"help_mode": help_mode, "difficulty": difficulty, "walt_say": decision.get("say")})
             return decision
 
+        skill_before = brain.skill.estimate if hasattr(brain, "skill") else None   # what Walt knew before
+        last_hp_lost = history[-1]["hp_lost_ratio"] if history else 0.0
         job = Job(decide, background)                                  # window: runs while the player walks
         if index == 0:
             for coach in coaches.values():                             # prepare the life stories early
@@ -560,6 +640,7 @@ def play_night(night, brain, policy, seed, narrator=None, with_activities=False)
                "hp_lost_ratio": round(hp_lost_ratio(t), 4), "band": band_position(t)}
         if activity:            # activities: the band and the skill estimate use the pressure (see activities.py)
             row.update({"beat_id": activity, "hp_lost_ratio": t["pressure"], "band": activity_band(t)})
+        row.update({"skill_before": skill_before, "last_hp_lost": last_hp_lost, "hp_before": state["hp"]})
         row["in_band"] = row["band"] == "in_band"
         if client:                                                     # model calls in this room (decision + hints)
             row["llm_calls"] = client.calls - calls_before[0]

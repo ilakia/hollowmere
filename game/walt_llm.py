@@ -267,12 +267,13 @@ You are the companion of a player who is getting through the haunted park tonigh
 challenge. You secretly choose how hard it is and how you help. The player never sees the difficulty.
 GOAL: the player should just about make it: win while using between 30% and 70% of their allowed mistakes.
 Too easy is boring, failing or nearly failing is frustrating.
-Difficulty: easy = clearly easier for everyone, normal, hard = clearly harder (good for strong players).
-A weak player usually needs easy and/or your help; a strong player needs hard and no help.
-The skill estimate compares the player with an average player: positive = struggling, negative = cruising.
-Answer ONLY with JSON: {"difficulty": "easy|normal|hard", "help": "<one of the listed ways to help>", "say": "..."}
+You get a short list of options. Each option was scored by a prediction model trained on thousands of
+earlier players: the chance that the challenge ends in band, too easy or too hard for THIS player right now.
+Prefer options with a high in-band chance and a low too-hard chance.
+Answer ONLY with JSON: {"option": <number of the option>, "say": "..."}
 - say: ONE short sentence (at most 15 words) to the player, gruff and warm, call them "kid". Say clearly how
-  you will help (or that you stay back). Never mention difficulty, numbers, or the option names."""
+  you will help in the option you chose (or that you stay back). Never mention difficulty, numbers, or the
+  option names."""
 
 STEP_IN_SYSTEM_PROMPT = """You are Walt, an old park mechanic who died in the 1987 fire at Hollowmere Park.
 Your companion, the player, is in the middle of a challenge. You may step in: change how hard the rest is
@@ -288,19 +289,30 @@ def activity_options_text(spec):
     return "\n".join(f"- {name}: {text}" for name, text in spec["help_text"].items())
 
 
-def activity_prompt(spec, hp, max_hp, skill_estimate, recent, memory="", said=()):
-    """Before an activity. recent = list of short texts about the last results. Rounded for the cache."""
+def activity_prompt(spec, hp, max_hp, skill_estimate, recent, options, memory="", said=()):
+    """Before an activity, with the scored options (help described in words). Rounded for the cache."""
     lines = [f"The challenge: {spec['title']}. {spec['what']}",
              f"They must succeed {spec['goal']} times and may make {spec['budget']} mistakes.",
-             "Ways you can help:", activity_options_text(spec),
              f"Player HP: {round_to(hp, 10):.0f} of {max_hp}.",
              f"Skill estimate: {round_to(skill_estimate, 0.05):+.2f} (positive = struggling, negative = cruising).",
-             "Recent results: " + ("; ".join(recent) if recent else "none yet") + "."]
+             "Recent results: " + ("; ".join(recent) if recent else "none yet") + ".",
+             "Options (predicted for this player):"]
+    for number, o in enumerate(options, start=1):
+        lines.append(f"{number}. difficulty={o['difficulty']}, your help: {spec['help_text'][o['help']]}: "
+                     f"in band {round_to(o['in_band'] * 100, 5):.0f}%, too easy {round_to(o['too_easy'] * 100, 5):.0f}%, "
+                     f"too hard {round_to(o['too_hard'] * 100, 5):.0f}%")
     if memory:
         lines.append(memory)
     if said:
         lines.append("Lines you already said tonight (say something new): " + " / ".join(said))
     return "\n".join(lines)
+
+
+def pace(view):
+    """Where the player will end if nothing changes: mistakes so far, scaled up to the whole goal.
+    Output: projected share of the allowed mistakes (capped at 1 = failing)."""
+    done = max(view["progress"], 1) / view["goal"]
+    return min(1.0, view["mistakes"] / view["budget"] / done)
 
 
 def step_in_prompt(spec, view, said=()):
@@ -309,10 +321,25 @@ def step_in_prompt(spec, view, said=()):
              f"Progress: {view['progress']} of {view['goal']} successes. Mistakes: {view['mistakes']} of "
              f"{view['budget']} allowed.",
              f"Right now: difficulty {view['difficulty']}, your help: {view['help']}.",
+             f"At this pace they will end at about {round_to(pace(view) * 100, 10):.0f}% of their allowed mistakes "
+             "(30-70% is the goal; 100% means they fail).",
              "Ways you can help:", activity_options_text(spec)]
     if said:
         lines.append("Lines you already said tonight (say something new): " + " / ".join(said))
     return "\n".join(lines)
+
+
+def check_activity_option(answer, options, spec, said=()):
+    """Validate a decision from the scored list. Output: (option or None, sentence or None, why dropped)."""
+    number = answer.get("option")
+    if isinstance(number, str) and number.strip().isdigit():
+        number = int(number.strip())
+    if not isinstance(number, int) or not 1 <= number <= len(options):
+        return None, None, "invalid choice"
+    option = options[number - 1]
+    fake = {"difficulty": option["difficulty"], "help": option["help"], "say": answer.get("say")}
+    _, _, say, dropped = check_activity_answer(fake, spec, said)
+    return option, say, dropped
 
 
 def check_activity_answer(answer, spec, said=()):

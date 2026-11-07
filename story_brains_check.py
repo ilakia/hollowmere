@@ -20,7 +20,9 @@ import random
 import pandas as pd
 
 from game.bots import Bot
-from game.story_mode import BRAINS, play_night
+from game.story_mode import BRAINS, DATA_BRAINS, play_night
+
+ALL_BRAINS = {**BRAINS, "predictor": DATA_BRAINS["predictor"]}
 from game.victims import NIGHTS
 from story_check import SmartBot
 
@@ -52,7 +54,7 @@ class ListeningBot(SmartBot):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--brains", nargs="+", default=["silent", "scripted"], choices=list(BRAINS))
+    ap.add_argument("--brains", nargs="+", default=["silent", "scripted"], choices=list(ALL_BRAINS))
     ap.add_argument("--games", type=int, default=100, help="nights per night x bot type x naive/smart")
     ap.add_argument("--nights", nargs="+", default=list(NIGHTS), choices=list(NIGHTS))
     ap.add_argument("--activities", action="store_true", help="the new night plan with two activities per night")
@@ -66,7 +68,7 @@ def main():
                 for kind, cls in (("naive", Bot), ("listen", ListeningBot), ("smart", SmartBot)):
                     for seed in range(args.first_seed, args.first_seed + args.games):
                         bot = cls(profile, random.Random(f"bot-{profile}-{seed}"))
-                        night_rows = play_night(night, BRAINS[brain_name](), bot, seed,
+                        night_rows = play_night(night, ALL_BRAINS[brain_name](), bot, seed,
                                                 with_activities=args.activities)
                         for r in night_rows:
                             r.update({"bot_type": profile, "player": kind})
