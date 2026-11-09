@@ -172,6 +172,19 @@ Findings (bots, small LLM sample):
   capacity, no charger). The model must only run with the charger connected; 9 small batches with
   cached answers (`data/llm_batches/`) completed.
 
+**LLM Walt v2 for activities (10-11 Nov).** Why v1 did badly (from the cached answers): when the best
+option was "hard" (31 times) he never chose a hard option, and his stepping in did not follow his pace
+(when it went too easily he made it easier more often than harder). Changes: the instruction now says to
+take the highest in-band chance (kindness is not making it easy: strong players get bored), only the 3
+best options are shown, and for stepping in he gets options (keep / easier / harder / more or less help)
+each with an expected end from the expected-pressure table. The predictor version got the same stepping-in
+numbers (always the option closest to 50%): 44% -> **48%** of activities in band (100 nights per type).
+LLM v2, Night A only (18 activities, 3 batches): he now gives experts "hard" in 4 of 6 activities (v1: 0 of
+6) and steps in less (1.2 vs 1.9 per activity); in band 33%, the same as v1 on Night A (Night A for 100
+nights: predictor 42%, scripted 36%, silent 27%). With 18 activities this cannot be told apart from the
+other versions; the LLM tests were stopped here (laptop battery). For the write-up: the LLM follows the
+numbers in the fights, and after a clearer instruction partly in the activities.
+
 ## 7. How to run the playtest
 
 ```
