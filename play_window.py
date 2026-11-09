@@ -259,6 +259,7 @@ class GameWindow:
         self.demo_dir = demo_dir
         self.demo_shots = 0
         self.demo_choice = None
+        self.events = []                 # the window events of the current frame (filled by tick)
 
     # ---- small shared pieces
     def popup(self, text, color, x, y):
@@ -411,8 +412,10 @@ class GameWindow:
         (a fixed 0.1 s in demo mode, so the demo runs fast and the same every time)."""
         if self.demo_dir is not None:
             pygame.event.pump()
+            self.events = []
             return 0.1
-        for event in pygame.event.get():
+        self.events = pygame.event.get()          # kept for scenes that read keys themselves (activities)
+        for event in self.events:
             if event.type == pygame.QUIT:
                 close_game()
             if event.type == pygame.KEYDOWN and event.key == pygame.K_m:

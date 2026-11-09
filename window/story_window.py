@@ -19,7 +19,9 @@ from game import config as C
 from game.chapters import (FIRE_GLOW_PER_ROOM, KEEPSAKE_BY_ID, KEEPSAKES, NIGHT_STORY, NIGHT_ZONE, ROOM_SKINS,
                            keepsake_for_room)
 from window.scenery import ZONE_MOODS
+from game.activities import ACTIVITIES
 from game.profiles import load_profile, update_profile
+from window.activity_window import CONTROLS, ActivityRunner
 from game.story_mode import BRAINS, play_night
 from game.victims import BENNY_MUSIC_TURNS, NIGHTS, VICTIMS
 from window.art import COLORS, HEIGHT, WIDTH, Button, draw_text
@@ -31,6 +33,23 @@ SPRITE_VICTIM = {"martha": "martha", "benny": "benny", "rosa": "rosa", "henry": 
                  "lily_reflection": "twins", "ned": "ned"}
 SILENT_LINE = "Careful, kid. Something's here."
 FINALE_NAMES = {"smoke": "The Smoke", "blaze": "The Blaze"}
+# where each playable activity happens (scene piece, park zone) and what Walt says for each kind of help
+ACTIVITY_PLACES = {"act_flashlight": ("z3_haunted_manor", 3), "act_lake": ("swan_boats", 5), "act_smoke": ("main_street", 6)}
+ACTIVITY_STORIES = {
+    "act_flashlight": ("The dark ride's lights die with a bang.", "Somewhere in here, arrows painted on the walls lead out."),
+    "act_lake": ("The only way on is across the black lake.", "A swan boat bumps against the jetty, waiting."),
+    "act_smoke": ("Smoke pours down Main Street.", "Every corner splits two ways. Only one of them breathes."),
+}
+ACTIVITY_HELP_LINES = {
+    "stay_back": "This one's all yours, kid. I'll stay back.",
+    "point": "Keep the beam moving, kid. I'll point you to the next one.",
+    "hold_light": "Let me hold the light steady for you, kid.",
+    "warn": "Row, kid. I'll warn you when the hands come.",
+    "steer": "You row, I'll steer. Don't worry about a slip or two.",
+    "row_with_you": "Grab an oar, kid. We row together, slow and safe.",
+    "shout_way": "Stay close, kid. I'll shout the way at every turn.",
+    "when_asked": "Go on, kid. If you take a wrong turn, I'll call the way.",
+}
 for _skins in ROOM_SKINS.values():                    # the short story shown while walking to each new place
     for _piece, _title, _story in _skins.values():
         PW.PLACE_STORIES[_piece] = _story
@@ -76,6 +95,7 @@ class StoryPolicy(PW.WindowPolicy):
         self.names_known = names_known      # victims whose names Walt has told (so the label can show them)
         self.coach = None                   # Walt's hint coach in the current victim fight (set by the narrator)
         self.finale_enemy = None            # Night B / C: what Walt and the player fight at the gate
+        self.activities = ActivityRunner(window)  # the playable mini-games (window/activity_window.py)
         self.help_asks = 0                  # "Walt, help!" presses in the current room
 
     def choose_action(self, view, rng):
@@ -83,6 +103,15 @@ class StoryPolicy(PW.WindowPolicy):
         if view.get("walt_line"):
             self.window.speak(view["walt_line"])
         return super().choose_action(view, rng)
+
+    def activity_step(self, view, rng):
+        """One step of an activity: the mini-game decides success (True) or a mistake (False)."""
+        return self.activities.step(view, rng)
+
+    def walt_says(self, line):
+        """Walt stepped in during an activity: say what he does now."""
+        self.window.bubble = ""
+        self.window.speak(line)
 
     def on_help(self, view):
         """"Walt, help!" (victim fights): Walt's coach answers (silent: '...', scripted: the next fixed hint,
@@ -267,6 +296,21 @@ class StoryNarrator(PW.WindowNarrator):
             w.speak(PW.WALT_BUBBLE.get(w.help_mode, ""))
         self.last_mode = w.help_mode
 
+    def explain_activity(self, activity, state):
+        """Arrived at an activity: a card with the controls, and Walt says how he helps (LLM Walt: his own
+        sentence; the others: the fixed line for the chosen help, silent Walt says nothing)."""
+        w = self.window
+        spec = ACTIVITIES[activity]
+        story = " ".join(ACTIVITY_STORIES[activity])                     # for the player (spec["what"] is for the LLM)
+        w.card(spec["title"], [(story, COLORS["text"]), (CONTROLS[activity], COLORS["flashlight"])],
+               button_label="Ready  [Space]")
+        w.bubble = ""
+        if state.get("walt_say"):
+            w.speak(state["walt_say"])
+        elif self.brain_name != "silent":
+            w.speak(ACTIVITY_HELP_LINES[state["help_mode"]])
+        self.policy.activities.message = ""
+
     def walk_tick(self, state):
         if not self.applied and self.job.done():
             self.apply_decision(state)
@@ -283,7 +327,13 @@ class StoryNarrator(PW.WindowNarrator):
 
     def before_room(self, state, info):
         w = self.window
-        beat = self.story.get(info["beat_id"])
+        activity = info["beat_id"] if info["beat_id"] in ACTIVITIES else None
+        if activity:                                             # an activity: its place, no ghosts on arrival
+            piece, zone_id = ACTIVITY_PLACES[activity]
+            beat = {"id": piece, "title": ACTIVITIES[activity]["title"], "zone": zone_id, "enemies": [],
+                    "threat": "medium"}
+        else:
+            beat = self.story.get(info["beat_id"])
         skin = ROOM_SKINS.get(self.night, {}).get(info["beat_id"])       # Night B / C: a new place
         place_zone = NIGHT_ZONE.get(self.night, state["zone"])
         zone = ZONE_MOODS[place_zone]["name"]
@@ -296,7 +346,7 @@ class StoryNarrator(PW.WindowNarrator):
         w.zone = place_zone
         w.help_mode = self.last_mode                             # unknown until Walt has decided
         if state["zone"] != self.zone_seen:
-            if skin is None:                                     # Night A: the park map card per zone
+            if skin is None and not activity:                    # Night A: the park map card per zone
                 self.zone_card(state, beat)
             self.zone_seen = state["zone"]
             self.zone_titles = []
@@ -304,6 +354,8 @@ class StoryNarrator(PW.WindowNarrator):
         shown = dict(beat)
         if skin is not None:
             shown["id"], shown["title"] = skin[0], skin[1]
+        if activity:
+            PW.PLACE_STORIES[beat["id"]] = ACTIVITY_STORIES[activity]
         victim = info["victim"]
         if victim == "twins":
             shown["enemies"] = ["lily", "lily_reflection"]
@@ -323,6 +375,8 @@ class StoryNarrator(PW.WindowNarrator):
             w.speak(w.finale_start, ghost=self.walt_is_enemy(state))
         elif victim:
             self.tell_about(victim, state.get("coach"))
+        elif activity:
+            self.explain_activity(activity, state)
         elif not state.get("walt_say"):
             w.bubble = PW.WALT_BUBBLE.get(w.help_mode, "")
         self.policy.coach = state.get("coach") if victim else None
@@ -403,8 +457,12 @@ class StoryNarrator(PW.WindowNarrator):
         if state["is_finale"] and row["cleared"] and self.chapter["flashback"] == "keepsakes":
             self.flashback()                                     # Night B: the gate is open, Walt remembers
         self.visited.append(row["beat_id"])
-        self.room_titles.append(self.story.by_id[row["beat_id"]]["title"])
-        self.zone_titles.append(self.story.by_id[row["beat_id"]]["title"])
+        if row["beat_id"] in ACTIVITIES:
+            title = ACTIVITIES[row["beat_id"]]["title"]
+        else:
+            title = self.story.by_id[row["beat_id"]]["title"]
+        self.room_titles.append(title)
+        self.zone_titles.append(title)
         row["timing_score"] = self.policy.take_room_timing()
         row["help_asks"] = self.policy.take_help_asks()
         band = row["band"]

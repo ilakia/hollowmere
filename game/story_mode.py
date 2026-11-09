@@ -83,6 +83,11 @@ def stronger(activity_id, help_mode, steps):
     return order[max(0, min(len(order) - 1, index))]
 
 
+STEP_IN_LINES = {"more": "Easy, kid. Let me give you a hand.",
+                 "less": "You've got this. I'll ease off.",
+                 "harder": "Too easy for you, kid? Let's see what you've really got."}
+
+
 class ScriptedActivityCoach:
     """Scripted Walt during an activity, at each checkpoint (fixed rules): 2+ mistakes since the last
     checkpoint -> one step easier and one step more help; no mistakes -> one step less help, or one step
@@ -97,11 +102,12 @@ class ScriptedActivityCoach:
         self.mistakes_before = view["mistakes"]
         if new_mistakes >= 2:
             return {"difficulty": harder(view["difficulty"], -1),
-                    "help": stronger(self.activity_id, view["help"], 1)}
+                    "help": stronger(self.activity_id, view["help"], 1), "say": STEP_IN_LINES["more"]}
         if new_mistakes == 0:
             if view["help"] != "stay_back":
-                return {"difficulty": view["difficulty"], "help": stronger(self.activity_id, view["help"], -1)}
-            return {"difficulty": harder(view["difficulty"], 1), "help": "stay_back"}
+                return {"difficulty": view["difficulty"], "help": stronger(self.activity_id, view["help"], -1),
+                        "say": STEP_IN_LINES["less"]}
+            return {"difficulty": harder(view["difficulty"], 1), "help": "stay_back", "say": STEP_IN_LINES["harder"]}
         return None
 
 
@@ -116,7 +122,24 @@ class LLMActivityCoach:
         self.fallbacks = 0
         self.lines = []
 
+    background = False                     # the game window sets True: the answer may arrive a few steps later
+    job = None
+
     def step_in(self, view):
+        if not self.background:
+            return self.decide_step_in(view)
+        if self.job is None:                # never more than one question at a time
+            self.job = Job(lambda: self.decide_step_in(view), background=True)
+        return None
+
+    def pending(self):
+        """A background answer that has arrived (once), else None."""
+        if self.job is not None and self.job.done():
+            result, self.job = self.job.result, None
+            return result
+        return None
+
+    def decide_step_in(self, view):
         options = step_in_options(self.spec, self.activity_id, view, self.brain.skill.table, self.brain.skill.fallback)
         answer = LLMBrain.client.ask(step_in_prompt(self.spec, view, options, self.brain.said[-SAID_MEMORY:]),
                                      STEP_IN_SYSTEM_PROMPT, tag="|walt_step_in3")
@@ -647,6 +670,8 @@ def play_night(night, brain, policy, seed, narrator=None, with_activities=False)
         coach = state["coach"]
         if activity:
             activity_coach = brain.activity_coach(activity)
+            if activity_coach is not None and background:
+                activity_coach.background = True
             t = play_activity(player, activity, difficulty, help_mode, policy, rng, activity_coach)
             t["coach_fallbacks"] = getattr(activity_coach, "fallbacks", 0)
             t["step_in_lines"] = " / ".join(getattr(activity_coach, "lines", []))

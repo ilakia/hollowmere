@@ -188,12 +188,22 @@ def play_activity(player, activity_id, difficulty, help_mode, policy, rng, coach
                 t["damage_taken"] += damage
         if progress >= goal or mistakes >= spec["budget"]:
             break
+        late = coach.pending() if coach is not None and hasattr(coach, "pending") else None
+        if late:                                               # a background answer (game window) arrived
+            old = (difficulty, help_mode)
+            difficulty = late["difficulty"] if late.get("difficulty") in STANDARD_DIFFICULTY else difficulty
+            help_mode = late["help"] if late.get("help") in spec["help"] else help_mode
+            if (difficulty, help_mode) != old:
+                t["step_ins"] += 1
+                t["step_in_log"] += f"{progress}:{old[0]}/{old[1]}->{difficulty}/{help_mode};"
+            if late.get("say") and hasattr(policy, "walt_says"):
+                policy.walt_says(late["say"])
         new_segment = min(2, progress * 3 // goal)             # checkpoints after 1/3 and 2/3 of the goal
         if new_segment > segment:
             segment, mistake_in_segment, forgiven_in_segment = new_segment, False, 0
             if coach is not None:
                 change = coach.step_in(dict(view, progress=progress, mistakes=mistakes, segment=segment,
-                                            hp=player.hp))
+                                            hp=player.hp, difficulty=difficulty, help=help_mode))
                 if change:
                     old = (difficulty, help_mode)
                     if change.get("difficulty") in STANDARD_DIFFICULTY:
@@ -203,6 +213,8 @@ def play_activity(player, activity_id, difficulty, help_mode, policy, rng, coach
                     if (difficulty, help_mode) != old:
                         t["step_ins"] += 1
                         t["step_in_log"] += f"{progress}:{old[0]}/{old[1]}->{difficulty}/{help_mode};"
+                    if change.get("say") and hasattr(policy, "walt_says"):
+                        policy.walt_says(change["say"])
     won = progress >= goal
     if not won:
         penalty = min(FAILED_PENALTY, player.hp - 1)

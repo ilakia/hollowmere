@@ -73,11 +73,13 @@ VICTIMS = {
                         "reach him was when it came past, whistle blowing."},
 }
 
-# Three nights, each with its own two victims (so a player meets each victim only once).
+# Three nights, each with its own two victims (so a player meets each victim only once) and one activity
+# (game/activities.py) in place of one normal fight: the playtest version. The bot-only plan with two
+# activities per night is NIGHTS_WITH_ACTIVITIES in game/activities.py.
 NIGHTS = {
-    "A": ["z1_cotton_candy", "martha", "z2_barrel", "z2_tilted_room", "z3_log_flume", "ned", "finale_gate"],
-    "B": ["z1_ring_toss", "rosa", "z2_tilted_room", "twins", "z3_tunnel_boats", "z3_haunted_manor", "finale_gate"],
-    "C": ["benny", "z1_ticket_booth", "henry", "z2_barrel", "z3_tunnel_boats", "z3_log_flume", "finale_gate"],
+    "A": ["z1_cotton_candy", "martha", "z2_tilted_room", "act_flashlight", "z3_log_flume", "ned", "finale_gate"],
+    "B": ["z1_ring_toss", "rosa", "act_lake", "twins", "z3_tunnel_boats", "z3_haunted_manor", "finale_gate"],
+    "C": ["benny", "z1_ticket_booth", "henry", "act_smoke", "z3_tunnel_boats", "z3_log_flume", "finale_gate"],
 }
 
 STUNNED_TURNS = 2           # Martha / Rosa after the flashlight: no attacks, take double damage
