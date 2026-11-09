@@ -144,6 +144,34 @@ Findings to keep in mind:
   is intended (finding the weakness is the reward), so victim fights are judged by **discovery**, and the
   band measure is reported for the **normal rooms**.
 
+### 6b. Activities (bots only so far, 8-10 Nov)
+
+Six activities (`game/activities.py`) replace two normal fights per night (`NIGHTS_WITH_ACTIVITIES`). Before
+each one Walt chooses the difficulty and his help; at two checkpoints he may step in. "In band" = won while
+using 30-70% of the allowed mistakes. Not yet playable in the game window (bots only).
+
+For LLM Walt an **activity band model** was trained like Study 1's (`activity_predictor.py`, logistic
+regression on 5,293 activities played with random settings; well calibrated on unseen test nights:
+predicted 26% in band -> real 26%). LLM Walt picks from the 6 best scored options, like llm_risk.
+
+| Walt version | Activities in band | beginner / average / expert | Normal fights in band | Activities |
+|---|---|---|---|---|
+| silent | 29% | 28 / 38 / 23% | 39% | ~1,800 |
+| scripted (rules) | 41% | 47 / 42 / 33% | 38% | ~1,800 |
+| predictor only (no LLM, ablation) | **44%** | 41 / **52** / **39%** | **56%** | ~1,800 |
+| LLM Walt without numbers | 17% | | | 18 |
+| LLM Walt with numbers | 26% | 38 / 31 / 11% | 50% | 50 |
+
+Findings (bots, small LLM sample):
+- With numbers, LLM Walt nearly matches the predictor in the **fights** (50% vs 56%; Study 1: 76.5% vs 78.5%).
+- In the **activities** he does not follow the numbers: he never chose "hard" for experts (the predictor
+  did in 93% of their activities) and stepped in more often (1.7 per activity), mostly making things
+  easier, so 58% ended too easy. Without numbers he chose "easy" for everyone (17% in band).
+- About half of his sentences failed the new checks (wrong help named, repeats); then the fixed line is used.
+- Laptop: the test laptop shut down twice when the model started (battery "Service Recommended", 53%
+  capacity, no charger). The model must only run with the charger connected; 9 small batches with
+  cached answers (`data/llm_batches/`) completed.
+
 ## 7. How to run the playtest
 
 ```
