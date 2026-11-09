@@ -57,6 +57,8 @@ def main():
     ap.add_argument("--brains", nargs="+", default=["silent", "scripted"], choices=list(ALL_BRAINS))
     ap.add_argument("--games", type=int, default=100, help="nights per night x bot type x naive/smart")
     ap.add_argument("--nights", nargs="+", default=list(NIGHTS), choices=list(NIGHTS))
+    ap.add_argument("--profiles", nargs="+", default=list(PROFILES), choices=list(PROFILES),
+                    help="only these bot types (small batches for LLM Walt)")
     ap.add_argument("--activities", action="store_true", help="the new night plan with two activities per night")
     ap.add_argument("--out", default=None, help="save all rows to this CSV (for a closer look)")
     ap.add_argument("--first-seed", type=int, default=300000, help="Study 2 bot seeds start at 300000")
@@ -64,7 +66,7 @@ def main():
     rows = []
     for brain_name in args.brains:
         for night in args.nights:
-            for profile in PROFILES:
+            for profile in args.profiles:
                 for kind, cls in (("naive", Bot), ("listen", ListeningBot), ("smart", SmartBot)):
                     for seed in range(args.first_seed, args.first_seed + args.games):
                         bot = cls(profile, random.Random(f"bot-{profile}-{seed}"))
@@ -74,6 +76,10 @@ def main():
                             r.update({"bot_type": profile, "player": kind})
                         rows.extend(night_rows)
             print(f"  {brain_name}: night {night} done")
+    client = getattr(ALL_BRAINS.get("llm"), "client", None)
+    if client is not None:
+        print(f"LLM: {client.calls} new model calls, {client.cache_hits} answers from the cache, "
+              f"{client.seconds:.0f} s of model work")
     df = pd.DataFrame(rows)
     if args.out:
         df.to_csv(args.out, index=False)
