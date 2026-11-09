@@ -39,9 +39,11 @@ from .activities import (ACTIVITIES, DIFFICULTY_STEPS, HELP_ORDER, NIGHTS_WITH_A
 from .walt_llm import (ACTIVITY_SYSTEM_PROMPT, HINT_SYSTEM_PROMPT, STEP_IN_SYSTEM_PROMPT, STORY_SYSTEM_PROMPT,
                        WALT_SYSTEM_PROMPT, WaltClient, activity_prompt, check_activity_answer,
                        check_activity_option, check_answer,
-                       check_hint, check_story, hint_prompt, step_in_prompt, study1_room_index, walt_prompt)
+                       check_hint, check_story, hint_prompt, step_in_options, step_in_prompt, study1_room_index,
+                       walt_prompt)
 
 LLM_SHORTLIST = 6              # same shortlist size as llm_risk in Study 1
+ACTIVITY_SHORTLIST = 3         # activities: only the 3 best (with 6 he often drifted to weak options, 10 Nov)
 # Hint ladder (part 2). Levels: 0 nothing, 1 the life story, 2 a clearer nudge, 3 exactly what to do.
 SCRIPTED_HINT_TURNS = {2: 4, 3: 7}      # scripted Walt: level 2 from turn 4, level 3 from turn 7 (if still not found)
 LLM_HINT_CHECKS = (3, 6)                # LLM Walt decides at these turns (2 calls per fight: speed and laptop heat)
@@ -104,30 +106,37 @@ class ScriptedActivityCoach:
 
 
 class LLMActivityCoach:
-    """LLM Walt during an activity: at each checkpoint the model sees the progress and decides whether to
-    change the difficulty and/or his help. Invalid answers change nothing (counted as fallbacks)."""
+    """LLM Walt during an activity: at each checkpoint he gets a short list (keep / easier / harder / more or
+    less help), each with the expected end, and picks one. Invalid answers change nothing (fallbacks)."""
 
     def __init__(self, activity_id, brain):
+        self.activity_id = activity_id
         self.spec = ACTIVITIES[activity_id]
         self.brain = brain
         self.fallbacks = 0
         self.lines = []
 
     def step_in(self, view):
-        answer = LLMBrain.client.ask(step_in_prompt(self.spec, view, self.brain.said[-SAID_MEMORY:]),
-                                     STEP_IN_SYSTEM_PROMPT, tag="|walt_step_in2")
+        options = step_in_options(self.spec, self.activity_id, view, self.brain.skill.table, self.brain.skill.fallback)
+        answer = LLMBrain.client.ask(step_in_prompt(self.spec, view, options, self.brain.said[-SAID_MEMORY:]),
+                                     STEP_IN_SYSTEM_PROMPT, tag="|walt_step_in3")
         LLMBrain.client.save_cache()
-        difficulty, help_mode, say, dropped = check_activity_answer(answer, self.spec, self.brain.said)
-        if difficulty is None or help_mode is None:
+        number = answer.get("option")
+        if isinstance(number, str) and number.strip().isdigit():
+            number = int(number.strip())
+        if not isinstance(number, int) or not 1 <= number <= len(options):
             self.fallbacks += 1
             return None
-        unchanged = (difficulty, help_mode) == (view["difficulty"], view["help"])
+        choice = options[number - 1]
+        fake = {"difficulty": choice["difficulty"], "help": choice["help"], "say": answer.get("say")}
+        _, _, say, dropped = check_activity_answer(fake, self.spec, self.brain.said)
+        unchanged = (choice["difficulty"], choice["help"]) == (view["difficulty"], view["help"])
         if say is None and dropped == "does not fit the choice" and unchanged:
-            say = answer.get("say", "").strip() or None          # no change: any encouraging word is fine
+            say = (answer.get("say") or "").strip() or None      # no change: any encouraging word is fine
         if say:
             self.brain.said.append(say)
             self.lines.append(say)
-        return {"difficulty": difficulty, "help": help_mode, "say": say}
+        return {"difficulty": choice["difficulty"], "help": choice["help"], "say": say}
 
 
 class Job:
@@ -455,10 +464,10 @@ class LLMBrain(ScriptedBrain):
         """As llm_risk in the fights: the model picks from the best scored options and says one sentence."""
         fallback = ScriptedBrain.decide_activity(self, state)
         spec = ACTIVITIES[state["activity"]]
-        shortlist = self.score_activity(state)[:LLM_SHORTLIST]
+        shortlist = self.score_activity(state)[:ACTIVITY_SHORTLIST]
         prompt = activity_prompt(spec, state["hp"], state["max_hp"], self.skill.estimate, self.recent_results(state),
                                  shortlist, self.memory, self.said[-SAID_MEMORY:])
-        answer = LLMBrain.client.ask(prompt, ACTIVITY_SYSTEM_PROMPT, tag="|walt_activity2")
+        answer = LLMBrain.client.ask(prompt, ACTIVITY_SYSTEM_PROMPT, tag="|walt_activity3")
         LLMBrain.client.save_cache()
         option, say, dropped = check_activity_option(answer, shortlist, spec, self.said)
         if option is None:
@@ -543,10 +552,24 @@ class PredictorBrain(LLMBrain):
                 "reason": "best predicted", "source": "predictor"}
 
     def activity_coach(self, activity_id):
-        return ScriptedActivityCoach(activity_id)
+        return PredictorActivityCoach(activity_id, self)
 
     def coach(self, victim_id, background=False):
         return ScriptedCoach(victim_id)
+
+
+class PredictorActivityCoach:
+    """The predictor version's stepping in: the same options as LLM Walt gets, always the one whose
+    expected end is closest to 50% (no language model)."""
+
+    def __init__(self, activity_id, brain):
+        self.activity_id = activity_id
+        self.spec = ACTIVITIES[activity_id]
+        self.brain = brain
+
+    def step_in(self, view):
+        best = step_in_options(self.spec, self.activity_id, view, self.brain.skill.table, self.brain.skill.fallback)[0]
+        return {"difficulty": best["difficulty"], "help": best["help"]}
 
 
 BRAINS = {b.name: b for b in [SilentBrain, ScriptedBrain, LLMBrain]}

@@ -266,10 +266,12 @@ ACTIVITY_SYSTEM_PROMPT = """You are Walt, an old park mechanic who died in the 1
 You are the companion of a player who is getting through the haunted park tonight. Next comes a short
 challenge. You secretly choose how hard it is and how you help. The player never sees the difficulty.
 GOAL: the player should just about make it: win while using between 30% and 70% of their allowed mistakes.
-Too easy is boring, failing or nearly failing is frustrating.
-You get a short list of options. Each option was scored by a prediction model trained on thousands of
-earlier players: the chance that the challenge ends in band, too easy or too hard for THIS player right now.
-Prefer options with a high in-band chance and a low too-hard chance.
+Being kind does NOT mean making it easy: a strong player who finds it too easy is bored, and boredom ruins
+the fun as much as failing does. Choosing "hard" for a strong player is the kind choice.
+You get a short list of options, scored by a prediction model trained on thousands of earlier players:
+the chance that the challenge ends in band, too easy or too hard for THIS player right now.
+Take the option with the highest in-band chance. Only take another one if its in-band chance is almost the
+same (at most 5 points lower).
 Answer ONLY with JSON: {"option": <number of the option>, "say": "..."}
 - say: ONE short sentence (at most 15 words) to the player, gruff and warm, call them "kid". Say clearly how
   you will help in the option you chose (or that you stay back). Never mention difficulty, numbers, or the
@@ -277,12 +279,14 @@ Answer ONLY with JSON: {"option": <number of the option>, "say": "..."}
 
 STEP_IN_SYSTEM_PROMPT = """You are Walt, an old park mechanic who died in the 1987 fire at Hollowmere Park.
 Your companion, the player, is in the middle of a challenge. You may step in: change how hard the rest is
-and/or how you help. GOAL: they should just about make it, using between 30% and 70% of their allowed
-mistakes. If they are close to failing, make it easier or help more. If they make no mistakes, make it
-harder or help less. If it is going about right, change nothing.
-Answer ONLY with JSON: {"difficulty": "easy|normal|hard", "help": "<one of the listed ways to help>", "say": "..."}
-(keep both the same to change nothing; then say an encouraging word)
-- say: ONE short sentence (at most 15 words), gruff and warm, call them "kid". Never mention numbers or option names."""
+and/or how you help. GOAL: they should end using between 30% and 70% of their allowed mistakes (about 50%
+is ideal). Being kind does NOT mean making it easy: if it is going too easily, make it harder or help less.
+You get a short list of options, each with where the player will probably end if you choose it.
+Take the option whose expected end is closest to 50%. Keeping things as they are is fine if that is closest.
+Answer ONLY with JSON: {"option": <number of the option>, "say": "..."}
+- say: ONE short sentence (at most 15 words), gruff and warm, call them "kid". If you change your help, say
+  how you help now. Never mention numbers or option names."""
+STEP_IN_IDEAL = 0.5
 
 
 def activity_options_text(spec):
@@ -315,15 +319,48 @@ def pace(view):
     return min(1.0, view["mistakes"] / view["budget"] / done)
 
 
-def step_in_prompt(spec, view, said=()):
-    """At a checkpoint during an activity."""
+def step_in_options(spec, activity_id, view, expected_table, fallback):
+    """The choices at a checkpoint: keep, one step easier / harder, one step more / less help (and easier +
+    more help together). Each gets an expected end: the current pace, shifted by how much the change moves an
+    average player's pressure (expected-pressure table), for the part that is still to come.
+    Output: list of dicts (difficulty, help, label, end), closest to the ideal 50% first."""
+    order = ["easy", "normal", "hard"]
+    helps = list(spec["help"])
+    now_d, now_h = view["difficulty"], view["help"]
+    remaining = 1 - view["progress"] / view["goal"]
+
+    def expected(d, h):
+        return expected_table.get((activity_id, d, h), fallback)
+
+    candidates = [(now_d, now_h, "keep everything as it is")]
+    i, j = order.index(now_d), helps.index(now_h)
+    if i > 0:
+        candidates.append((order[i - 1], now_h, "make the rest easier"))
+    if i < 2:
+        candidates.append((order[i + 1], now_h, "make the rest harder"))
+    if j < len(helps) - 1:
+        candidates.append((now_d, helps[j + 1], f"help more: {spec['help_text'][helps[j + 1]]}"))
+    if j > 0:
+        candidates.append((now_d, helps[j - 1], f"help less: {spec['help_text'][helps[j - 1]]}"))
+    if i > 0 and j < len(helps) - 1:
+        candidates.append((order[i - 1], helps[j + 1], f"easier and help more: {spec['help_text'][helps[j + 1]]}"))
+    options = []
+    for d, h, label in candidates:
+        end = pace(view) + (expected(d, h) - expected(now_d, now_h)) * remaining
+        options.append({"difficulty": d, "help": h, "label": label, "end": min(1.0, max(0.0, end))})
+    options.sort(key=lambda o: abs(o["end"] - STEP_IN_IDEAL))
+    return options
+
+
+def step_in_prompt(spec, view, options, said=()):
+    """At a checkpoint during an activity, with the scored options."""
     lines = [f"The challenge: {spec['title']}. {spec['what']}",
              f"Progress: {view['progress']} of {view['goal']} successes. Mistakes: {view['mistakes']} of "
              f"{view['budget']} allowed.",
-             f"Right now: difficulty {view['difficulty']}, your help: {view['help']}.",
-             f"At this pace they will end at about {round_to(pace(view) * 100, 10):.0f}% of their allowed mistakes "
-             "(30-70% is the goal; 100% means they fail).",
-             "Ways you can help:", activity_options_text(spec)]
+             f"Right now: difficulty {view['difficulty']}, your help: {spec['help_text'][view['help']]}.",
+             "Options (where the player will probably end, as a share of their allowed mistakes):"]
+    for number, o in enumerate(options, start=1):
+        lines.append(f"{number}. {o['label']}: about {round_to(o['end'] * 100, 5):.0f}%")
     if said:
         lines.append("Lines you already said tonight (say something new): " + " / ".join(said))
     return "\n".join(lines)
