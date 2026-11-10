@@ -303,8 +303,11 @@ class StoryNarrator(PW.WindowNarrator):
         spec = ACTIVITIES[activity]
         story = " ".join(ACTIVITY_STORIES[activity])                     # for the player (spec["what"] is for the LLM)
         w.card(spec["title"], [(story, COLORS["text"]), (CONTROLS[activity], COLORS["flashlight"])],
-               button_label="Ready  [Space]")
+               button_label="Practice  [Space]")
         w.bubble = ""
+        self.policy.activities.practice(activity)                       # 3 steps, not counted (same for all)
+        w.card("Now it counts", [("That was the practice. Now the real one, with Walt.", COLORS["text"]),
+                                 (CONTROLS[activity], COLORS["flashlight"])], button_label="Start  [Space]")
         if state.get("walt_say"):
             w.speak(state["walt_say"])
         elif self.brain_name != "silent":

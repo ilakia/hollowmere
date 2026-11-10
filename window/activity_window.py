@@ -35,6 +35,25 @@ LAKE_HAND = {"easy": 0.15, "normal": 0.25, "hard": 0.35}
 SMOKE_TIME = {"easy": 6.0, "normal": 4.2, "hard": 2.8}
 SMOKE_CLARITY = {"easy": 1.0, "normal": 0.55, "hard": 0.25}     # 1 = black vs white smoke, 0 = the same grey
 DEMO_SUCCESS = 0.7
+PRACTICE_STEPS = 3                 # practice steps before each activity (not counted)
+KEY_NAMES = {pygame.K_LEFT: "LEFT ARROW", pygame.K_RIGHT: "RIGHT ARROW", pygame.K_d: "D KEY"}
+
+
+def draw_key(c, font, font_big, key, x, y, color):
+    """Draws a keyboard key (a key cap with an arrow or the letter D) and its name below it."""
+    cap = pygame.Rect(x - 50, y - 40, 100, 80)
+    pygame.draw.rect(c, (235, 230, 220), cap, border_radius=12)
+    pygame.draw.rect(c, color, cap, 5, border_radius=12)
+    if key == pygame.K_LEFT:
+        pygame.draw.polygon(c, (30, 30, 40), [(x - 28, y), (x + 4, y - 24), (x + 4, y + 24)])
+        pygame.draw.rect(c, (30, 30, 40), (x + 4, y - 9, 24, 18))
+    elif key == pygame.K_RIGHT:
+        pygame.draw.polygon(c, (30, 30, 40), [(x + 28, y), (x - 4, y - 24), (x - 4, y + 24)])
+        pygame.draw.rect(c, (30, 30, 40), (x - 28, y - 9, 24, 18))
+    else:
+        draw_text(c, "D", font_big, (30, 30, 40), x, y, center=True)
+    draw_text(c, "Press " + KEY_NAMES[key], font_big, color, x + 150, y - 30)       # right of the ring
+    draw_text(c, "before the ring closes", font, COLORS["text"], x + 150, y + 6)
 
 
 class ActivityRunner:
@@ -54,6 +73,8 @@ class ActivityRunner:
         """Top line: the activity, progress and the fail budget as a meter."""
         w = self.w
         w.draw_top_bar(c)
+        if view.get("practice"):
+            title = "Practice - " + title
         draw_text(c, f"{title}: {view['progress']} of {view['goal']}", w.font_big, COLORS["charge"], 30, 52)
         draw_text(c, "danger", w.font_small, COLORS["dim_text"], WIDTH - 280, 58)
         meter = pygame.Rect(WIDTH - 220, 56, 190, 16)
@@ -72,6 +93,29 @@ class ActivityRunner:
         if not success:
             w.shake.start(6, 0.25)
         return success
+
+    def practice(self, activity):
+        """A short practice before the real activity, the same for every Walt version: PRACTICE_STEPS steps
+        at the easy setting with no help (the lake practice always includes one hand, so the D key is seen).
+        Nothing is counted or saved. Skipped in demo mode."""
+        if self.w.demo_dir is not None:
+            return
+        mistakes = 0
+        for i in range(PRACTICE_STEPS):
+            view = {"activity": activity, "difficulty": "easy", "help": None, "progress": i, "goal": PRACTICE_STEPS,
+                    "mistakes": mistakes, "budget": PRACTICE_STEPS, "segment": -1, "practice": True,
+                    "force_hand": i == PRACTICE_STEPS - 1}
+            if not self.step(view, self.rng):
+                mistakes += 1
+            pause = time.time()
+            while time.time() - pause < 0.6:              # a moment to read "Pull!" / "Too late!"
+                self.w.tick()
+                draw_text(self.w.canvas, self.message, self.w.font, COLORS["text"], WIDTH // 2, HEIGHT - 40, center=True)
+                self.w.present()
+        self.stroke = 0                                   # the real activity starts fresh
+        self.segment_mistake = (None, False)
+        self.last_mistakes = 0
+        self.message = ""
 
     def step(self, view, rng):
         if self.w.demo_dir is not None:                         # demo: fast, and the same every time
@@ -141,10 +185,12 @@ class ActivityRunner:
     def lake(self, view):
         w = self.w
         window = LAKE_WINDOW[view["difficulty"]] + (0.35 if view["help"] == "row_with_you" else 0.0)
-        hand = self.rng.random() < LAKE_HAND[view["difficulty"]]
+        if view.get("practice"):
+            hand = view["force_hand"]                     # the practice shows the hand once, at the end
+        else:
+            hand = self.rng.random() < LAKE_HAND[view["difficulty"]]
         warning = 0.7 if hand and view["help"] == "warn" else 0.0
         wanted = pygame.K_d if hand else (pygame.K_LEFT if self.stroke % 2 == 0 else pygame.K_RIGHT)
-        label = "D" if hand else ("<-" if wanted == pygame.K_LEFT else "->")
         start = time.time()
         while True:
             dt = w.tick()
@@ -190,10 +236,10 @@ class ActivityRunner:
                                      (hx - 4 + k * 8, base - int(90 * rise) - 18), 4)
             if warning and elapsed < warning + 0.35:
                 draw_text(c, "Walt: HAND, kid! Get ready for D!", w.font_big, COLORS["damage"], WIDTH // 2, 140, center=True)
-            if live >= 0:                                             # the cue with a closing ring
+            if live >= 0:                                             # the cue: a key inside a closing ring
                 share = max(0.0, 1 - live / window)
-                pygame.draw.circle(c, COLORS["charge"], (WIDTH // 2, 210), int(30 + 60 * share), 4)
-                draw_text(c, label, w.font_title, COLORS["damage"] if hand else COLORS["text"], WIDTH // 2, 210, center=True)
+                pygame.draw.circle(c, COLORS["charge"], (WIDTH // 2, 190), int(68 + 70 * share), 5)
+                draw_key(c, w.font, w.font_big, wanted, WIDTH // 2, 190, COLORS["damage"] if hand else COLORS["charge"])
             self.hud(c, view, "Lake Crossing")
             w.present()
 

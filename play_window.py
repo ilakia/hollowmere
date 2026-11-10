@@ -77,6 +77,7 @@ REVEAL_LINE = "I never left this park, kid. Neither will you."
 FAREWELL_LINE = "Not bad, kid. Not bad at all. Go on. Don't look back."
 # Flashback pictures stay at least MEMORY_SECONDS after Walt starts the line, and until he has finished it
 MEMORY_SECONDS = 6.0
+MEMORY_LIFT = (70, 58, 40)          # added to every pixel of a memory picture: brighter, warm (pilot: "too dark")
 MEMORY_WAIT_MAX = 8.0            # wait at most this long for the line before (e.g. the gate line) to end
 MEMORY_SECONDS_MAX = 30.0
 # After the escape the player chooses: "The End" or "...or maybe not?" (= straight into the next night)
@@ -736,6 +737,7 @@ class WindowNarrator:
                 old = pygame.transform.grayscale(c)                                      # turn it into an old memory
                 tint = (255, 150, 90) if style == "fire" else (255, 222, 170)
                 old.fill(tint, special_flags=pygame.BLEND_MULT)
+                old.fill(MEMORY_LIFT, special_flags=pygame.BLEND_RGB_ADD)                # brighter, like an old photo
                 c.blit(old, (0, 0))
                 if style == "fire":                                                      # flames along the ground
                     for i in range(26):
