@@ -528,6 +528,9 @@ RATING_QUESTIONS = [
 ]
 
 
+ENJOYED_MOST = ["The fights", "The ghosts' stories and tricks", "The challenge", "The story"]
+
+
 def ask_question(window, number, total, text, options):
     """One question on its own screen, answers as buttons (keys 1-5). Output: index of the chosen answer."""
     w = window
@@ -558,7 +561,7 @@ def post_night_questions(window, rows):
     """After a story night: 4 ratings and one comprehension question per victim met (3 answers in a fixed
     shuffled order). Output: dict of answers (saved by play_window.py to data/story_answers.csv)."""
     victims = [r["victim"] for r in rows if r.get("victim")]
-    total = len(RATING_QUESTIONS) + len(victims)
+    total = len(RATING_QUESTIONS) + len(victims) + 1
     answers = {}
     window.room_label = "A few questions"
     for number, (key, text, options) in enumerate(RATING_QUESTIONS, start=1):
@@ -570,6 +573,8 @@ def post_night_questions(window, rows):
         shown = [options[k] for k in order]
         picked = ask_question(window, len(RATING_QUESTIONS) + i + 1, total, question, shown)
         answers[f"understood_{victim}"] = shown[picked] == right
+    picked = ask_question(window, total, total, "Which part of this night did you enjoy most?", ENJOYED_MOST)
+    answers["enjoyed_most"] = ENJOYED_MOST[picked]
     return answers
 
 

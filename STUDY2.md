@@ -117,10 +117,47 @@ After each night (questions in the game, `data/story_answers.csv`):
   of the difficulty band
 - **Comprehension**, one question per victim met (3 answers): separates understanding the clue from using it
 
-Main comparisons (`python analyze_study2.py`), per Walt version: share of normal rooms in band (Study 1's
-measure, now with humans), discovery (found, how fast, at which hint level), comprehension, ratings; and
-within each player LLM vs scripted / silent with an exact sign test. With 9-18 players this is mainly
-descriptive.
+Per activity (one per night in the playtest: Flashlight Search, Lake Crossing, Smoke Escape): start and end
+difficulty and help, successes, mistakes, pressure (share of the fail budget used), the activity band, how
+often Walt stepped in (and what he said). After each night also: **"Which part did you enjoy most?"** (the
+fights / the ghosts' stories and tricks / the challenge / the story).
+
+## 5b. Hypotheses and analysis plan (fixed on 11 Nov 2026, BEFORE any playtest data)
+
+Written down before the playtest so the results cannot shape the questions. Each player plays the three
+nights (A, B, C) with the three Walt versions in one of 6 rotated orders; every comparison is **within the
+same player** (LLM Walt vs the player's own nights with the other versions).
+
+**Main measure for difficulty:** per night, the share of the **adjustable rooms** that ended in band: the 3
+normal fights and the activity (4 rooms where Walt chose the difficulty; victims and finale excluded:
+victims depend on finding the trick, the finale is a boss).
+
+| | Hypothesis (direction) | Measure | Based on |
+|---|---|---|---|
+| H1 | LLM Walt keeps more adjustable rooms in band than silent Walt | in-band share per night | Study 1 and the bot pre-check (fights: LLM 50%, silent 39%) |
+| H2 | With LLM Walt the night feels closer to "just right" than with silent Walt | distance of "How hard was this night?" from 3 (smaller = better) | the band idea, from the player's side |
+| H3 | With scripted and with LLM Walt, players find more victim weaknesses than with silent Walt | share of the 2 victims whose weakness was used | hint ladder bot check (scripted 90%, silent 24%) |
+| H4 | LLM Walt feels more like a real companion than scripted and than silent Walt | rating 1-5 | the research question |
+| H5 | Nights with LLM Walt are more fun than with silent Walt | rating 1-5 | the research question |
+
+**Tests:** for each hypothesis the per-player difference (e.g. LLM minus silent); an exact one-sided sign
+test (how many players are better with LLM Walt than without, ties dropped); the p-values of H1-H5 (six
+comparisons: H3 and H4 have two each) are corrected with Holm's method. Reported for every comparison: the
+mean difference with a bootstrap 95% interval (seed 42), and how many players were better / worse / equal.
+With 9-18 players only large effects can be shown; small or unclear results are reported as such, not as
+"no effect".
+
+**Exploratory (no hypothesis, reported descriptively):** LLM vs scripted Walt on H1-H3; the activities
+on their own (bots: LLM Walt did not follow the numbers well there); hint level at discovery; "Walt, help!"
+presses; comprehension; which part was most fun; LLM waiting times, fallbacks and dropped sentences;
+keepsakes found (Night B).
+
+**Who is counted:** playtest IDs only (not PILOT*, GUEST or the developer's own ID). A player who stops
+early counts for the nights they finished; within-player tests use the pairs that exist.
+**When the playtest ends:** at 18 players or on 24 Nov, whichever comes first.
+**Known limits:** fixed night order (night and position cannot be separated); LLM Walt differs from the
+others in several ways at once (difficulty numbers, talking, memory), so the comparison is of companions as
+a whole; bots and the activity settings come from the same simulator (the playtest is the real test).
 
 ## 6. Bot pre-check (`python story_brains_check.py`, done before the playtest)
 
