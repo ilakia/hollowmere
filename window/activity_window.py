@@ -26,13 +26,14 @@ from window.art import COLORS, HEIGHT, WIDTH, draw_bubble, draw_text
 
 GROUND_Y = 385
 CONTROLS = {
-    "act_flashlight": "Move the beam with the MOUSE (or the arrow keys). Press SPACE when the glowing marker is in the light.",
+    "act_flashlight": "Move the light with the MOUSE (or the arrow keys). Find the green EXIT sign. When it is inside your light, press SPACE.",
     "act_lake": "Steer the boat with UP and DOWN. Wrecks and drowned hands drift out of the fog: be in a free lane when they reach you.",
     "act_bucket": "Run with LEFT and RIGHT along the stalls. When a fire flares up, stand in front of it and press SPACE to throw water before it spreads.",
     "act_smoke": "Two doors: press LEFT or RIGHT before the smoke comes down. The safe door has cool light and thin haze; the other one has fire.",
 }
-FLASH_BEAM = {"easy": 120, "normal": 90, "hard": 66}
-FLASH_TIME = {"easy": 6.0, "normal": 4.5, "hard": 3.3}
+FLASH_BEAM = {"easy": 120, "normal": 90, "hard": 76}            # hard 66 -> 76 after the pilot (too hard)
+FLASH_TIME = {"easy": 6.0, "normal": 4.5, "hard": 3.9}       # hard 3.3 -> 3.9 after the pilot
+FLASH_GLINT = {"easy": 1.0, "normal": 0.5, "hard": 0.0}          # how clearly the sign twinkles through the dark
 LAKE_TIME = {"easy": 2.7, "normal": 1.35, "hard": 0.75}          # seconds from the fog edge to the boat
 LAKE_FOG_X = {"easy": 860, "normal": 640, "hard": 520}           # where the fog starts (things come out of it)
 LAKE_TWO_BLOCKED = {"easy": 0.0, "normal": 0.4, "hard": 0.8}     # chance that two of the three lanes are blocked
@@ -153,22 +154,30 @@ class ActivityRunner:
             lit = math.hypot(x - marker[0], y - marker[1]) < beam * 0.75
             for event in w.events:
                 if (event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE) or event.type == pygame.MOUSEBUTTONDOWN:
-                    return self.result(lit, "Found it! On to the next one.", "Nothing there... something brushes past you.")
+                    return self.result(lit, "Found it! On to the next one.", "Not lit yet! Get the EXIT sign inside your light first.")
             if elapsed > limit:
                 return self.result(False, "", "Too slow! A cold hand grabs you in the dark.")
             c = w.canvas
             w.scenery.draw_back(c, 3)
             w.draw_piece(170, 300, True)
-            pulse = 0.6 + 0.4 * abs(math.sin(elapsed * 5))           # the marker: a glowing arrow sign
-            pygame.draw.polygon(c, (int(255 * pulse), int(220 * pulse), 90),
-                                [(marker[0] - 18, marker[1] - 10), (marker[0] + 8, marker[1] - 10), (marker[0] + 8, marker[1] - 20),
-                                 (marker[0] + 26, marker[1]), (marker[0] + 8, marker[1] + 20), (marker[0] + 8, marker[1] + 10),
-                                 (marker[0] - 18, marker[1] + 10)])
+            pulse = 0.6 + 0.4 * abs(math.sin(elapsed * 5))           # the target: a glowing EXIT sign
+            sign = pygame.Rect(marker[0] - 40, marker[1] - 18, 80, 36)
+            pygame.draw.rect(c, (int(60 * pulse), int(170 * pulse), int(80 * pulse)), sign, border_radius=6)
+            pygame.draw.rect(c, (230, 255, 230), sign, 2, border_radius=6)
+            draw_text(c, "EXIT >", w.font, (240, 255, 240), marker[0], marker[1], center=True)
             dark = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
             dark.fill((0, 0, 0, 245))
             pygame.draw.circle(dark, (0, 0, 0, 0), (int(x), int(y)), beam)
             pygame.draw.circle(dark, (0, 0, 0, 120), (int(x), int(y)), beam, 18)   # soft edge
             c.blit(dark, (0, 0))
+            glint = FLASH_GLINT[view["difficulty"]]                   # a green twinkle through the dark
+            twinkle = max(0.0, math.sin(elapsed * 4))
+            if glint > 0 and not lit and twinkle > 0.3:
+                pygame.draw.circle(c, (90, 255, 120), marker, int(2 + 4 * glint * twinkle))
+            if lit:                                                   # it is in the light: press now
+                ring = 44 + int(6 * math.sin(elapsed * 10))
+                pygame.draw.circle(c, COLORS["flashlight"], marker, ring, 3)
+                draw_text(c, "SPACE!", w.font_big, COLORS["flashlight"], marker[0], marker[1] - 60, center=True)
             for ex, ey in eyes:                                       # eyes in the dark
                 if math.hypot(ex - x, ey - y) > beam and int(elapsed * 2 + ex) % 5:
                     pygame.draw.circle(c, (220, 40, 40), (ex - 6, ey), 3)
@@ -182,7 +191,11 @@ class ActivityRunner:
             pygame.draw.rect(c, COLORS["bar_back"], timer, border_radius=4)
             pygame.draw.rect(c, COLORS["flashlight"], (timer.x, timer.y, int(timer.width * (1 - elapsed / limit)), 10),
                              border_radius=4)
+            draw_text(c, "time", w.font_small, COLORS["dim_text"], timer.x - 40, timer.y - 4)
             self.hud(c, view, "Flashlight Search")
+            if not self.message:
+                draw_text(c, "Move the light (mouse or arrows). Find the green EXIT sign. When it's lit, press SPACE.",
+                          w.font_small, COLORS["text"], WIDTH // 2, HEIGHT - 26, center=True)
             w.present()
 
     # ---- Night B: Lake Crossing

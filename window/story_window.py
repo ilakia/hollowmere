@@ -38,7 +38,7 @@ DECISION_WAIT_MAX = 2.0     # seconds the ghosts wait at the end of the walk for
 ACTIVITY_PLACES = {"act_flashlight": ("z3_haunted_manor", 3), "act_lake": ("swan_boats", 5), "act_smoke": ("main_street", 6),
                    "act_bucket": ("main_street", 6)}
 ACTIVITY_STORIES = {
-    "act_flashlight": ("The dark ride's lights die with a bang.", "Somewhere in here, arrows painted on the walls lead out."),
+    "act_flashlight": ("The dark ride's lights die with a bang.", "Somewhere in here, old green EXIT signs still show the way out."),
     "act_lake": ("The only way on is across the black lake.", "A swan boat bumps against the jetty, waiting."),
     "act_smoke": ("Smoke pours down Main Street.", "Every corner splits two ways. Only one of them breathes."),
     "act_bucket": ("June 1987. The stalls on Main Street catch fire one by one.",
