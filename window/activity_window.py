@@ -50,20 +50,6 @@ DEMO_SUCCESS = 0.7
 PRACTICE_STEPS = 3                 # practice steps before each activity (not counted)
 
 
-# What a change of difficulty means in each game, and Walt's help in a few words (for the banner)
-EASIER = {"act_flashlight": "bigger light, more time", "act_lake": "slower wrecks, thinner fog",
-          "act_bucket": "more time, the flaring fire is easier to spot", "act_smoke": "more time, clearer smoke"}
-HARDER = {"act_flashlight": "smaller light, less time", "act_lake": "faster wrecks, thicker fog",
-          "act_bucket": "less time, the fires look alike", "act_smoke": "less time, the smoke looks alike"}
-HELP_SHORT = {"stay_back": "Walt stays back", "point": "Walt points to the sign", "hold_light": "Walt holds the light",
-              "warn": "Walt shouts the clear lane", "steer": "Walt steers (a bump is forgiven)",
-              "row_with_you": "Walt rows with you (slower)", "throw_too": "Walt throws buckets too",
-              "point_fire": "Walt points at the fire", "shout_way": "Walt shouts the way",
-              "when_asked": "Walt helps after a mistake"}
-LEVELS = ["easy", "normal", "hard"]
-BANNER_SECONDS = 3.0
-
-
 class ActivityRunner:
     """Runs one step of the current activity in the window. Output of step(): True = success."""
 
@@ -80,8 +66,10 @@ class ActivityRunner:
         self.segment_mistake = (None, False)   # smoke: (segment, a mistake happened in it)
         self.last_mistakes = 0
         self.message = ""
-        self.banner = ""                       # Walt changed the game mid-way: shown for BANNER_SECONDS
-        self.banner_until = 0.0
+        self.fog_now = None                    # lake: where the fog starts, gliding to the current setting
+        self.beam_now = None                   # flashlight: the light's size, gliding to the current setting
+        self.decoy_now = None                  # bucket: how high the other fires burn, gliding
+        self.pace_now = None                   # lake: how fast the water rushes past, gliding
 
     # ---- shared pieces
     def hud(self, c, view, title):
@@ -100,23 +88,14 @@ class ActivityRunner:
             draw_text(c, self.message, w.font, COLORS["text"], WIDTH // 2, HEIGHT - 40, center=True)
         if w.bubble:
             draw_bubble(c, w.font_small, w.bubble, 300, 250)
-        if self.banner and time.time() < self.banner_until:     # Walt's adjustment, clearly visible
-            text = w.font.render(self.banner, True, (30, 20, 10))
-            box = text.get_rect(center=(WIDTH // 2, 128)).inflate(28, 14)
-            pygame.draw.rect(c, COLORS["flashlight"], box, border_radius=8)
-            c.blit(text, text.get_rect(center=box.center))
 
-    def show_change(self, activity, old, new):
-        """Walt adjusted the activity mid-way (difficulty and / or help): a banner says what changes."""
-        parts = []
-        if new[0] != old[0]:
-            easier = LEVELS.index(new[0]) < LEVELS.index(old[0])
-            word = "EASIER" if easier else "HARDER"
-            parts.append(f"Walt made it {word}: " + (EASIER if easier else HARDER)[activity])
-        if new[1] != old[1]:
-            parts.append(HELP_SHORT.get(new[1], ""))
-        self.banner = "  |  ".join(part for part in parts if part)
-        self.banner_until = time.time() + BANNER_SECONDS
+    def glide(self, now, target, dt, speed=1.5):
+        """Moves a shown setting smoothly towards Walt's current setting (about a second for a full change),
+        so a change of difficulty in the middle of an activity is visible in the game itself."""
+        if now is None:
+            return target                          # the first step: start at the setting
+        step = (target - now) * min(1.0, dt * speed)
+        return now + step
 
     def result(self, success, text_ok, text_bad, quiet_success=False):
         w = self.w
@@ -147,6 +126,7 @@ class ActivityRunner:
                 draw_text(self.w.canvas, self.message, self.w.font, COLORS["text"], WIDTH // 2, HEIGHT - 40, center=True)
                 self.w.present()
         self.lane = 1                                     # the real activity starts fresh
+        self.fog_now = self.beam_now = self.decoy_now = self.pace_now = None
         self.stall = 1
         self.passing = []
         self.segment_mistake = (None, False)
@@ -168,7 +148,7 @@ class ActivityRunner:
     # ---- Night A: Flashlight Search
     def flashlight(self, view):
         w = self.w
-        beam = FLASH_BEAM[view["difficulty"]] + (35 if view["help"] == "hold_light" else 0)
+        beam_target = FLASH_BEAM[view["difficulty"]] + (35 if view["help"] == "hold_light" else 0)
         limit = FLASH_TIME[view["difficulty"]]
         marker = (self.rng.randint(90, WIDTH - 90), self.rng.randint(130, GROUND_Y - 20))
         eyes = [(self.rng.randint(40, WIDTH - 40), self.rng.randint(110, GROUND_Y)) for _ in range(6)]
@@ -184,6 +164,8 @@ class ActivityRunner:
             elif pygame.mouse.get_focused():
                 x, y = pygame.mouse.get_pos()
             x, y = max(0, min(WIDTH, x)), max(40, min(HEIGHT, y))
+            self.beam_now = self.glide(self.beam_now, beam_target, dt)   # Walt's change: the light grows / shrinks
+            beam = int(self.beam_now)
             lit = math.hypot(x - marker[0], y - marker[1]) < beam * 0.75
             for event in w.events:
                 if (event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE) or event.type == pygame.MOUSEBUTTONDOWN:
@@ -238,7 +220,10 @@ class ActivityRunner:
         blocked, so every step needs a move. Output: True = dodged."""
         w = self.w
         travel = LAKE_TIME[view["difficulty"]] * (1.3 if view["help"] == "row_with_you" else 1.0)
-        fog_x = LAKE_FOG_X[view["difficulty"]]
+        fog_target = LAKE_FOG_X[view["difficulty"]]
+        if self.fog_now is None:
+            self.fog_now = fog_target
+        pace_target = 140 * LAKE_TIME["normal"] / travel                  # how fast the water rushes past
         blocked = [self.lane]
         if self.rng.random() < LAKE_TWO_BLOCKED[view["difficulty"]]:
             others = [lane for lane in range(3) if lane != self.lane]
@@ -248,13 +233,16 @@ class ActivityRunner:
         kinds = {}
         for lane in blocked:
             kinds[lane] = "hand" if self.rng.random() < 0.4 else "wreck"
-        start_x = fog_x + 30                                          # comes straight out of the fog: no gap
+        start_x = self.fog_now + 30                                   # comes straight out of the fog: no gap
         speed = (start_x - LAKE_BOAT_X) / travel
         start = time.time()
         while True:
             dt = w.tick()
             elapsed = time.time() - start
-            self.scroll += dt * 140
+            self.fog_now = self.glide(self.fog_now, fog_target, dt)       # Walt's change: the fog rolls back / in
+            self.pace_now = self.glide(self.pace_now, pace_target, dt)    # and the boat speeds up / slows down
+            fog_x = self.fog_now
+            self.scroll += dt * self.pace_now
             for event in w.events:                                    # steering
                 if event.type != pygame.KEYDOWN:
                     continue
@@ -461,13 +449,15 @@ class ActivityRunner:
         Output: True = the flaring fire was put out in time."""
         w = self.w
         limit = BUCKET_TIME[view["difficulty"]]
-        decoy = BUCKET_DECOY[view["difficulty"]]                 # how high the other fires burn (0..1)
+        decoy_target = BUCKET_DECOY[view["difficulty"]]          # how high the other fires burn (0..1)
         others = [stall for stall in range(4) if stall != self.stall]
         flaring = self.rng.choice(others)                        # never right in front of the player
         start = time.time()
         while True:
             dt = w.tick()
             elapsed = time.time() - start
+            self.decoy_now = self.glide(self.decoy_now, decoy_target, dt)   # Walt's change: other fires calm / flare
+            decoy = self.decoy_now
             for event in w.events:
                 if event.type != pygame.KEYDOWN:
                     continue

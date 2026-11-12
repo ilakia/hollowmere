@@ -114,10 +114,6 @@ class StoryPolicy(PW.WindowPolicy):
         """One step of an activity: the mini-game decides success (True) or a mistake (False)."""
         return self.activities.step(view, rng)
 
-    def activity_changed(self, activity, old, new):
-        """Walt changed the difficulty or his help in the middle of an activity: show it."""
-        self.activities.show_change(activity, old, new)
-
     def walt_says(self, line):
         """Walt stepped in during an activity: say what he does now."""
         self.window.bubble = ""

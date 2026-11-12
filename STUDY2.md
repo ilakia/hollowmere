@@ -126,9 +126,10 @@ Pilot changes (before the first playtest player, 12-13 Nov): the Lake Crossing b
 between three lanes), and Night C's Smoke Escape was replaced by the Bucket Brigade (same engine rules as in
 the bot runs and the activity band model). Each activity starts with 3 practice steps that are not counted.
 If an LLM decision is not ready 2 s after the walk, scripted Walt's rule decides that room (logged as "timeout").
-When Walt changes difficulty or help in the middle of an activity (the checkpoints after 1/3 and 2/3), a banner
-now shows it ("Walt made it EASIER: slower wrecks, thinner fog"), so the in-game adjustment is visible to the
-player. The engine rules and the checkpoints are unchanged (bot results identical).
+When Walt changes the difficulty in the middle of an activity (the checkpoints after 1/3 and 2/3), the change is
+now visible in the game itself, without any text: it glides in over about a second (lake: the fog rolls back or
+in and the boat slows down or speeds up; flashlight: the light grows or shrinks; bucket: the other fires calm
+down or flare up). The engine rules and the checkpoints are unchanged (bot results identical).
 
 ## 5b. Hypotheses and analysis plan (fixed on 11 Nov 2026, BEFORE any playtest data)
 
