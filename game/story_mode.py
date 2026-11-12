@@ -640,9 +640,8 @@ def play_night(night, brain, policy, seed, narrator=None, with_activities=False)
         client = getattr(brain, "client", None)                        # LLM Walt only: count model time
         calls_before = (client.calls, client.cache_hits, client.seconds) if client else None
 
-        def decide(state=state):
-            """Walt's decision for this room, checked, and written into the state."""
-            decision = brain.decide(state)
+        def settle(decision, state=state):
+            """Check a decision (invalid parts -> safe defaults) and write it into the state."""
             help_mode = C.FINALE_HELP_MODE if state["walt_is_enemy"] else decision.get("help_mode")
             allowed = ACTIVITIES[state["activity"]]["help"] if state["activity"] else C.HELP_MODES
             if help_mode not in allowed and not state["walt_is_enemy"]:
@@ -654,9 +653,38 @@ def play_night(night, brain, policy, seed, narrator=None, with_activities=False)
             state.update({"help_mode": help_mode, "difficulty": difficulty, "walt_say": decision.get("say")})
             return decision
 
+        decided = {"result": None, "late": False}                      # shared with the window (thread-safe)
+        lock = threading.Lock()
+
+        def decide(state=state):
+            """Walt's decision for this room. If the window already gave up waiting, it is thrown away."""
+            decision = brain.decide(state)
+            with lock:
+                if decided["late"]:
+                    return None
+                decided["result"] = settle(decision)
+                return decided["result"]
+
+        def final(state=state):
+            """The decision to play with. Called by the window when the walk is over: if Walt's (LLM)
+            decision is still not ready, scripted Walt's rule decides this room instead (source 'timeout'),
+            so the player never waits."""
+            with lock:
+                if decided["result"] is not None:
+                    return decided["result"]
+                decided["late"] = True
+                if state.get("activity"):
+                    quick = ScriptedBrain.decide_activity(brain, state)
+                else:
+                    quick = ScriptedBrain.decide(brain, state)
+                quick["source"] = "timeout"
+                decided["result"] = settle(quick)
+                return decided["result"]
+
         skill_before = brain.skill.estimate if hasattr(brain, "skill") else None   # what Walt knew before
         last_hp_lost = history[-1]["hp_lost_ratio"] if history else 0.0
         job = Job(decide, background)                                  # window: runs while the player walks
+        job.final = final
         if index == 0:
             for coach in coaches.values():                             # prepare the life stories early
                 coach.start_story()

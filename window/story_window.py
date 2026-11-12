@@ -34,6 +34,7 @@ SPRITE_VICTIM = {"martha": "martha", "benny": "benny", "rosa": "rosa", "henry": 
 SILENT_LINE = "Careful, kid. Something's here."
 FINALE_NAMES = {"smoke": "The Smoke", "blaze": "The Blaze"}
 # where each playable activity happens (scene piece, park zone) and what Walt says for each kind of help
+DECISION_WAIT_MAX = 2.0     # seconds the ghosts wait at the end of the walk for an LLM decision
 ACTIVITY_PLACES = {"act_flashlight": ("z3_haunted_manor", 3), "act_lake": ("swan_boats", 5), "act_smoke": ("main_street", 6)}
 ACTIVITY_STORIES = {
     "act_flashlight": ("The dark ride's lights die with a bang.", "Somewhere in here, arrows painted on the walls lead out."),
@@ -44,8 +45,8 @@ ACTIVITY_HELP_LINES = {
     "stay_back": "This one's all yours, kid. I'll stay back.",
     "point": "Keep the beam moving, kid. I'll point you to the next one.",
     "hold_light": "Let me hold the light steady for you, kid.",
-    "warn": "Row, kid. I'll warn you when the hands come.",
-    "steer": "You row, I'll steer. Don't worry about a slip or two.",
+    "warn": "You steer, kid. I'll shout which lane is clear.",
+    "steer": "You steer, I'll keep us steady. A bump or two won't sink us.",
     "row_with_you": "Grab an oar, kid. We row together, slow and safe.",
     "shout_way": "Stay close, kid. I'll shout the way at every turn.",
     "when_asked": "Go on, kid. If you take a wrong turn, I'll call the way.",
@@ -274,13 +275,15 @@ class StoryNarrator(PW.WindowNarrator):
         self.keepsake_state = None           # the keepsake on the current walk: None, "lying", "taken"
         self.job = None                      # Walt's decision for the current room (made while walking)
         self.applied = True
+        self.wait_started = None             # when the walk ended while Walt was still deciding
 
     def before_room_deciding(self, state, info, job):
         """Zone card and walk while Walt decides (job). His decision is applied the moment it is ready; the
         ghosts only wait at the end of the walk if it is still not ready. Output: the decision."""
         self.job, self.applied = job, False
+        self.wait_started = None
         self.before_room(state, info)
-        return job.result
+        return job.final()
 
     def apply_decision(self, state):
         """Walt's decision has arrived: set difficulty and help, and let him say his line."""
@@ -319,7 +322,16 @@ class StoryNarrator(PW.WindowNarrator):
             self.apply_decision(state)
 
     def ready_to_appear(self, state):
-        return self.applied
+        """The walk is over. Wait at most DECISION_WAIT_MAX for Walt's decision, then take the quick one."""
+        if self.applied:
+            return True
+        if self.wait_started is None:
+            self.wait_started = time.time()
+        if time.time() - self.wait_started > DECISION_WAIT_MAX:
+            self.job.final()                                     # scripted rule for this room ("timeout")
+            self.apply_decision(state)
+            return True
+        return False
 
     def walt_is_enemy(self, state):
         return state["walt_is_enemy"]
@@ -390,10 +402,6 @@ class StoryNarrator(PW.WindowNarrator):
         """The normal walk, plus (Night B) a keepsake that glints on the ground halfway: press E while it is
         near to pick it up. Walk past it and it is gone for tonight."""
         super().draw_walk(state, beat, walked, appear, stepping, moved)
-        if walked >= PW.WALK_DISTANCE and appear is None and not self.applied:
-            dots = "." * (1 + int(time.time() * 3) % 3)
-            draw_text(self.window.canvas, f"Walt is thinking{dots}", self.window.font, COLORS["flashlight"],
-                      WIDTH // 2, 440, center=True)
         if self.keepsake_state != "lying":
             return
         if appear is not None:                   # the ghosts are here: walked past it, gone for tonight
