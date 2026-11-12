@@ -50,6 +50,20 @@ DEMO_SUCCESS = 0.7
 PRACTICE_STEPS = 3                 # practice steps before each activity (not counted)
 
 
+# What a change of difficulty means in each game, and Walt's help in a few words (for the banner)
+EASIER = {"act_flashlight": "bigger light, more time", "act_lake": "slower wrecks, thinner fog",
+          "act_bucket": "more time, the flaring fire is easier to spot", "act_smoke": "more time, clearer smoke"}
+HARDER = {"act_flashlight": "smaller light, less time", "act_lake": "faster wrecks, thicker fog",
+          "act_bucket": "less time, the fires look alike", "act_smoke": "less time, the smoke looks alike"}
+HELP_SHORT = {"stay_back": "Walt stays back", "point": "Walt points to the sign", "hold_light": "Walt holds the light",
+              "warn": "Walt shouts the clear lane", "steer": "Walt steers (a bump is forgiven)",
+              "row_with_you": "Walt rows with you (slower)", "throw_too": "Walt throws buckets too",
+              "point_fire": "Walt points at the fire", "shout_way": "Walt shouts the way",
+              "when_asked": "Walt helps after a mistake"}
+LEVELS = ["easy", "normal", "hard"]
+BANNER_SECONDS = 3.0
+
+
 class ActivityRunner:
     """Runs one step of the current activity in the window. Output of step(): True = success."""
 
@@ -66,6 +80,8 @@ class ActivityRunner:
         self.segment_mistake = (None, False)   # smoke: (segment, a mistake happened in it)
         self.last_mistakes = 0
         self.message = ""
+        self.banner = ""                       # Walt changed the game mid-way: shown for BANNER_SECONDS
+        self.banner_until = 0.0
 
     # ---- shared pieces
     def hud(self, c, view, title):
@@ -84,6 +100,23 @@ class ActivityRunner:
             draw_text(c, self.message, w.font, COLORS["text"], WIDTH // 2, HEIGHT - 40, center=True)
         if w.bubble:
             draw_bubble(c, w.font_small, w.bubble, 300, 250)
+        if self.banner and time.time() < self.banner_until:     # Walt's adjustment, clearly visible
+            text = w.font.render(self.banner, True, (30, 20, 10))
+            box = text.get_rect(center=(WIDTH // 2, 128)).inflate(28, 14)
+            pygame.draw.rect(c, COLORS["flashlight"], box, border_radius=8)
+            c.blit(text, text.get_rect(center=box.center))
+
+    def show_change(self, activity, old, new):
+        """Walt adjusted the activity mid-way (difficulty and / or help): a banner says what changes."""
+        parts = []
+        if new[0] != old[0]:
+            easier = LEVELS.index(new[0]) < LEVELS.index(old[0])
+            word = "EASIER" if easier else "HARDER"
+            parts.append(f"Walt made it {word}: " + (EASIER if easier else HARDER)[activity])
+        if new[1] != old[1]:
+            parts.append(HELP_SHORT.get(new[1], ""))
+        self.banner = "  |  ".join(part for part in parts if part)
+        self.banner_until = time.time() + BANNER_SECONDS
 
     def result(self, success, text_ok, text_bad, quiet_success=False):
         w = self.w
@@ -272,7 +305,7 @@ class ActivityRunner:
             c.blit(fog, (0, 0))
             if view["help"] == "warn":                                # Walt calls the free lane early
                 pygame.draw.circle(c, COLORS["flashlight"], (LAKE_BOAT_X + 150, LAKE_LANES[call] - 20), 12)
-                draw_bubble(c, w.font_small, f"{LANE_NAMES[call]} lane, kid!", 200, 150)
+                draw_bubble(c, w.font_small, f"{LANE_NAMES[call]} lane, kid!", 330, 235)
             self.draw_swan_boat(c, LAKE_BOAT_X, int(self.boat_y + 3 * math.sin(elapsed * 3)))
             self.hud(c, view, "Lake Crossing")
             if not self.message:

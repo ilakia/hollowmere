@@ -196,6 +196,8 @@ def play_activity(player, activity_id, difficulty, help_mode, policy, rng, coach
             if (difficulty, help_mode) != old:
                 t["step_ins"] += 1
                 t["step_in_log"] += f"{progress}:{old[0]}/{old[1]}->{difficulty}/{help_mode};"
+                if hasattr(policy, "activity_changed"):           # the window shows the change (bots: nothing)
+                    policy.activity_changed(activity_id, old, (difficulty, help_mode))
             if late.get("say") and hasattr(policy, "walt_says"):
                 policy.walt_says(late["say"])
         new_segment = min(2, progress * 3 // goal)             # checkpoints after 1/3 and 2/3 of the goal
@@ -213,6 +215,8 @@ def play_activity(player, activity_id, difficulty, help_mode, policy, rng, coach
                     if (difficulty, help_mode) != old:
                         t["step_ins"] += 1
                         t["step_in_log"] += f"{progress}:{old[0]}/{old[1]}->{difficulty}/{help_mode};"
+                        if hasattr(policy, "activity_changed"):   # the window shows the change (bots: nothing)
+                            policy.activity_changed(activity_id, old, (difficulty, help_mode))
                     if change.get("say") and hasattr(policy, "walt_says"):
                         policy.walt_says(change["say"])
     won = progress >= goal
