@@ -35,11 +35,14 @@ SILENT_LINE = "Careful, kid. Something's here."
 FINALE_NAMES = {"smoke": "The Smoke", "blaze": "The Blaze"}
 # where each playable activity happens (scene piece, park zone) and what Walt says for each kind of help
 DECISION_WAIT_MAX = 2.0     # seconds the ghosts wait at the end of the walk for an LLM decision
-ACTIVITY_PLACES = {"act_flashlight": ("z3_haunted_manor", 3), "act_lake": ("swan_boats", 5), "act_smoke": ("main_street", 6)}
+ACTIVITY_PLACES = {"act_flashlight": ("z3_haunted_manor", 3), "act_lake": ("swan_boats", 5), "act_smoke": ("main_street", 6),
+                   "act_bucket": ("main_street", 6)}
 ACTIVITY_STORIES = {
     "act_flashlight": ("The dark ride's lights die with a bang.", "Somewhere in here, arrows painted on the walls lead out."),
     "act_lake": ("The only way on is across the black lake.", "A swan boat bumps against the jetty, waiting."),
     "act_smoke": ("Smoke pours down Main Street.", "Every corner splits two ways. Only one of them breathes."),
+    "act_bucket": ("June 1987. The stalls on Main Street catch fire one by one.",
+                   "Walt grabs two buckets from the fountain. 'Help me, kid! Before it reaches the rides!'"),
 }
 ACTIVITY_HELP_LINES = {
     "stay_back": "This one's all yours, kid. I'll stay back.",
@@ -50,6 +53,8 @@ ACTIVITY_HELP_LINES = {
     "row_with_you": "Grab an oar, kid. We row together, slow and safe.",
     "shout_way": "Stay close, kid. I'll shout the way at every turn.",
     "when_asked": "Go on, kid. If you take a wrong turn, I'll call the way.",
+    "throw_too": "I'll throw with you, kid. Two buckets are better than one.",
+    "point_fire": "Throw where I point, kid. I'll show you the worst one.",
 }
 for _skins in ROOM_SKINS.values():                    # the short story shown while walking to each new place
     for _piece, _title, _story in _skins.values():
@@ -428,7 +433,7 @@ class StoryNarrator(PW.WindowNarrator):
     def flashback(self):
         """At the gate. Night A: the clue rooms (as in the normal game). Night B: what each keepsake found
         tonight reminds Walt of. Night C: the fire of 1987, one scene per keepsake found in Night B, a
-        burnt-out frame for each one that was missed, then the truth."""
+        every scene of the fire (the ones whose keepsake was found in Night B are marked), then the truth."""
         kind = self.chapter["flashback"]
         if kind == "clues":
             super().flashback()
@@ -444,11 +449,11 @@ class StoryNarrator(PW.WindowNarrator):
                 self.memory_scene(keepsake["beat"], keepsake["memory"], style="keepsake")
             self.memory_scene(None, story["flashback_end"])
             return
-        for keepsake in KEEPSAKES:                                   # Night C, in the order of that night
-            if keepsake["id"] in self.keepsakes_before:
-                self.memory_scene(keepsake["beat"], keepsake["fire"], style="fire")
-            else:
-                self.memory_scene(None, story["flashback_missing"], style="burnt")
+        for keepsake in KEEPSAKES:                                   # Night C: every scene of the fire, in order
+            label = None                                             # (the story must make sense even if no
+            if keepsake["id"] in self.keepsakes_before:              #  keepsake was found in Night B)
+                label = "You found: " + keepsake["name"]
+            self.memory_scene(keepsake["beat"], keepsake["fire"], style="fire", label=label)
         self.memory_scene(None, story["flashback_end"])
 
     def tell_about(self, victim, coach):

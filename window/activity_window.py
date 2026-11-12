@@ -5,8 +5,10 @@ counts successes, mistakes and the fail budget exactly as for the bots, and Walt
 
   Flashlight Search (Night A): move the beam (mouse or arrow keys), press Space when the marker is lit.
   Lake Crossing (Night B):     steer between three lanes (UP / DOWN) to dodge wrecks and hands from the fog.
-  Smoke Escape (Night C):      choose the left or right way (arrow keys) before the smoke closes in;
-                               the safe way has lighter smoke and no flames.
+  Bucket Brigade (Night C):    run along four burning stalls (LEFT / RIGHT), throw water (SPACE) at the fire
+                               that flares up before it spreads. (Replaced the Smoke Escape after the pilot.)
+  Smoke Escape (not used):      two doors in the burning street: LEFT or RIGHT before the smoke ceiling comes
+                               down; the safe door has cool light and thin haze, the other one fire.
 
 Walt's settings change the mini-game itself:
   difficulty -> beam size / time window / timer / how clear the clues are
@@ -26,7 +28,8 @@ GROUND_Y = 385
 CONTROLS = {
     "act_flashlight": "Move the beam with the MOUSE (or the arrow keys). Press SPACE when the glowing marker is in the light.",
     "act_lake": "Steer the boat with UP and DOWN. Wrecks and drowned hands drift out of the fog: be in a free lane when they reach you.",
-    "act_smoke": "Pick a way with LEFT or RIGHT before the smoke closes in. Safe smoke is lighter; fire smoke is black, with embers.",
+    "act_bucket": "Run with LEFT and RIGHT along the stalls. When a fire flares up, stand in front of it and press SPACE to throw water before it spreads.",
+    "act_smoke": "Two doors: press LEFT or RIGHT before the smoke comes down. The safe door has cool light and thin haze; the other one has fire.",
 }
 FLASH_BEAM = {"easy": 120, "normal": 90, "hard": 66}
 FLASH_TIME = {"easy": 6.0, "normal": 4.5, "hard": 3.3}
@@ -37,6 +40,9 @@ LAKE_LANES = (300, 395, 490)                                     # waterline of 
 LANE_NAMES = ("TOP", "MIDDLE", "BOTTOM")
 LAKE_WATER_Y = 240
 LAKE_BOAT_X = 300
+BUCKET_TIME = {"easy": 3.2, "normal": 2.2, "hard": 1.5}          # seconds before the flaring fire spreads
+BUCKET_DECOY = {"easy": 0.1, "normal": 0.5, "hard": 0.9}         # how high the other fires burn (hard: alike)
+BUCKET_STALLS = (180, 380, 580, 780)                             # x of the four burning stalls
 SMOKE_TIME = {"easy": 6.0, "normal": 4.2, "hard": 2.8}
 SMOKE_CLARITY = {"easy": 1.0, "normal": 0.55, "hard": 0.25}     # 1 = black vs white smoke, 0 = the same grey
 DEMO_SUCCESS = 0.7
@@ -53,6 +59,9 @@ class ActivityRunner:
         self.boat_y = float(LAKE_LANES[1])
         self.scroll = 0.0
         self.passing = []                      # lake: [kind, lane, x] of wrecks / hands already passed
+        self.puffs = {}                        # smoke: soft puff images, made once
+        self.stall = 1                         # bucket: the stall the player stands at (0..3)
+        self.runner_x = float(BUCKET_STALLS[1])
         self.segment_mistake = (None, False)   # smoke: (segment, a mistake happened in it)
         self.last_mistakes = 0
         self.message = ""
@@ -104,6 +113,7 @@ class ActivityRunner:
                 draw_text(self.w.canvas, self.message, self.w.font, COLORS["text"], WIDTH // 2, HEIGHT - 40, center=True)
                 self.w.present()
         self.lane = 1                                     # the real activity starts fresh
+        self.stall = 1
         self.passing = []
         self.segment_mistake = (None, False)
         self.last_mistakes = 0
@@ -117,6 +127,8 @@ class ActivityRunner:
             return self.flashlight(view)
         if view["activity"] == "act_lake":
             return self.lake(view)
+        if view["activity"] == "act_bucket":
+            return self.bucket(view)
         return self.smoke(view)
 
     # ---- Night A: Flashlight Search
@@ -279,6 +291,10 @@ class ActivityRunner:
 
     # ---- Night C: Smoke Escape
     def smoke(self, view):
+        """One step = one fork in the burning street: two doors, LEFT or RIGHT. Behind one is clear air, behind
+        the other the fire. A ceiling of smoke comes down: choose before it reaches you. Difficulty sets the
+        time and how clearly the doors differ (easy: blue light vs. flames; hard: nearly the same grey).
+        Output: True = the safe door."""
         w = self.w
         if self.segment_mistake[0] != view["segment"]:
             self.segment_mistake = (view["segment"], False)
@@ -293,33 +309,202 @@ class ActivityRunner:
         while True:
             w.tick()
             elapsed = time.time() - start
+            chosen = None
             for event in w.events:
-                if event.type == pygame.KEYDOWN and event.key in (pygame.K_LEFT, pygame.K_RIGHT):
-                    chosen = "left" if event.key == pygame.K_LEFT else "right"
-                    return self.result(chosen == safe, "Clear air! Keep going.", "Flames! You burn your arm getting back.")
+                if event.type == pygame.KEYDOWN and event.key in (pygame.K_LEFT, pygame.K_a):
+                    chosen = "left"
+                if event.type == pygame.KEYDOWN and event.key in (pygame.K_RIGHT, pygame.K_d):
+                    chosen = "right"
+            if chosen is not None:
+                self.run_through(chosen == safe)
+                return self.result(chosen == safe, "", "Flames! You burn your arm getting back.", quiet_success=True)
             if elapsed > limit:
                 return self.result(False, "", "The smoke closes in! You stumble out coughing.")
-            c = w.canvas
-            w.scenery.draw_back(c, 6)
-            for side in ("left", "right"):                            # two alleys with smoke
-                x = 260 if side == "left" else 700
-                is_safe = side == safe
-                grey = 150 + int(80 * clarity) if is_safe else 150 - int(110 * clarity)
-                for k in range(7):
-                    puff = (elapsed * 0.6 + k / 7) % 1.0
-                    pygame.draw.circle(c, (grey, grey, grey), (x + int(30 * math.sin(k + elapsed)), GROUND_Y - int(puff * 260)),
-                                       30 + int(puff * 30))
-                if not is_safe and self.rng.random() < 0.2 + 0.6 * clarity:   # embers in the fire smoke
-                    pygame.draw.circle(c, (255, 140, 40), (x + self.rng.randint(-40, 40), GROUND_Y - self.rng.randint(20, 240)), 3)
-                pygame.draw.rect(c, (40, 30, 30), (x - 70, GROUND_Y - 280, 140, 280), 6, border_radius=10)
-                draw_text(c, "LEFT" if side == "left" else "RIGHT", w.font_big, COLORS["text"], x, GROUND_Y + 30, center=True)
-            w.draw_sprite("player", 480, GROUND_Y)
-            w.draw_sprite("walt", 400, GROUND_Y)
-            if shouts and elapsed > 0.8:
-                draw_bubble(c, w.font_small, f"{safe.upper()}, kid! This way!", 400, 250)
-            timer = pygame.Rect(WIDTH // 2 - 150, 90, 300, 10)
-            pygame.draw.rect(c, COLORS["bar_back"], timer, border_radius=4)
-            pygame.draw.rect(c, COLORS["damage"], (timer.x, timer.y, int(timer.width * (1 - elapsed / limit)), 10),
-                             border_radius=4)
-            self.hud(c, view, "Smoke Escape")
+            self.draw_smoke_street(elapsed, elapsed / limit, safe, clarity)
+            if shouts and elapsed > 0.6:
+                draw_bubble(w.canvas, w.font_small, f"{safe.upper()}, kid! This way!", 470, 300)
+            self.hud(w.canvas, view, "Smoke Escape")
+            if not self.message:
+                draw_text(w.canvas, "LEFT or RIGHT: pick the door with clear air", w.font, COLORS["text"],
+                          WIDTH // 2, HEIGHT - 30, center=True)
+            w.present()
+
+    def draw_smoke_street(self, elapsed, share, safe, clarity):
+        """The burning street with two doors and the smoke ceiling coming down (share 0 -> 1)."""
+        w = self.w
+        c = w.canvas
+        w.scenery.draw_back(c, 6)
+        shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        shade.fill((20, 8, 4, 120))
+        c.blit(shade, (0, 0))
+        pygame.draw.rect(c, (62, 44, 40), (150, 120, WIDTH - 300, GROUND_Y - 120))          # the building front
+        for row in range(120, GROUND_Y, 22):                                              # bricks
+            pygame.draw.line(c, (48, 34, 30), (150, row), (WIDTH - 150, row), 2)
+        pygame.draw.rect(c, (40, 30, 26), (0, GROUND_Y, WIDTH, HEIGHT - GROUND_Y))        # the street
+        for side in ("left", "right"):
+            x = 300 if side == "left" else 660
+            self.draw_door(c, x, side == safe, clarity, elapsed)
+            key = "<  LEFT" if side == "left" else "RIGHT  >"
+            draw_text(c, key, w.font_big, COLORS["text"], x, GROUND_Y + 28, center=True)
+        for k in range(14):                                                               # embers rising
+            ex = (k * 71 + int(elapsed * 30)) % WIDTH
+            ey = HEIGHT - int((elapsed * 90 + k * 47) % (HEIGHT - 60))
+            pygame.draw.circle(c, (255, 150, 60), (ex, ey), 2)
+        w.draw_sprite("walt", 440, HEIGHT - 50)
+        w.draw_sprite("player", 520, HEIGHT - 50)
+        ceiling = 40 + int((GROUND_Y - 40) * share)                                        # the smoke comes down
+        smoke = pygame.Surface((WIDTH, ceiling), pygame.SRCALPHA)
+        smoke.fill((34, 30, 30, 215))
+        c.blit(smoke, (0, 0))
+        for k in range(16):                                                               # its soft lower edge
+            px = k * 64 + int(14 * math.sin(elapsed * 2 + k))
+            c.blit(self.puff((50, 44, 44), 120), (px - 60, ceiling - 60))
+
+    def draw_door(self, c, x, is_safe, clarity, elapsed):
+        """One doorway. Safe: cool light and thin pale haze. Fire: an orange glow, flames and dark smoke;
+        the lower the clarity, the more alike the two doors look."""
+        door = pygame.Rect(x - 80, GROUND_Y - 220, 160, 220)
+        if is_safe:
+            inside = (int(40 + 30 * clarity), int(50 + 40 * clarity), int(60 + 70 * clarity))
+        else:
+            flicker = 0.85 + 0.15 * math.sin(elapsed * 9 + x)
+            inside = (int((60 + 160 * clarity) * flicker), int((48 + 50 * clarity) * flicker), 40)
+        pygame.draw.rect(c, inside, door, border_top_left_radius=70, border_top_right_radius=70)
+        if not is_safe:
+            for k in range(1 + int(6 * clarity)):                                         # flames inside
+                fx = door.x + 20 + k * 22
+                height = int(30 + 40 * clarity * abs(math.sin(elapsed * 6 + k * 1.3)))
+                pygame.draw.polygon(c, (255, 140 + (k % 2) * 60, 40),
+                                    [(fx - 10, door.bottom), (fx + 10, door.bottom), (fx, door.bottom - height)])
+        grey = int(140 + 70 * clarity) if is_safe else int(140 - 90 * clarity)          # smoke out of the door
+        for k in range(5):
+            rise = (elapsed * 0.5 + k / 5) % 1.0
+            c.blit(self.puff((grey, grey, grey), 110),
+                   (x - 55 + int(20 * math.sin(k + elapsed)), door.y + 60 - int(rise * 160)))
+        pygame.draw.rect(c, (30, 20, 18), door, 8, border_top_left_radius=70, border_top_right_radius=70)
+
+    def puff(self, color, size):
+        """A soft round smoke puff (see-through towards the edge), made once per colour and size."""
+        key = (color, size)
+        if key not in self.puffs:
+            surface = pygame.Surface((size, size), pygame.SRCALPHA)
+            for k in range(10):                                   # outer rings first, each one more solid
+                radius = int(size / 2 * (1 - k / 10))
+                pygame.draw.circle(surface, (*color, 10 + k * 10), (size // 2, size // 2), radius)
+            self.puffs[key] = surface
+        return self.puffs[key]
+
+    def run_through(self, safe):
+        """After a choice: a short fade, as if running through the door (clear air or into the flames)."""
+        w = self.w
+        colour = (0, 0, 0) if safe else (120, 40, 10)
+        start = time.time()
+        while time.time() - start < 0.3:
+            w.tick()
+            veil = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            veil.fill((*colour, int(255 * (time.time() - start) / 0.3)))
+            w.canvas.blit(veil, (0, 0))
+            w.present()
+
+    # ---- Night C: Bucket Brigade
+    def bucket(self, view):
+        """One step = one fire flaring up in one of four burning stalls. The player runs left / right along
+        the stalls and throws water (SPACE) at the flaring one before it spreads. Difficulty: less time, and
+        the other fires burn almost as high (harder to see which one flares). Help 'point_fire': Walt points
+        at it. Help 'throw_too': Walt throws as well (the engine may count a miss as his hit).
+        Output: True = the flaring fire was put out in time."""
+        w = self.w
+        limit = BUCKET_TIME[view["difficulty"]]
+        decoy = BUCKET_DECOY[view["difficulty"]]                 # how high the other fires burn (0..1)
+        others = [stall for stall in range(4) if stall != self.stall]
+        flaring = self.rng.choice(others)                        # never right in front of the player
+        start = time.time()
+        while True:
+            dt = w.tick()
+            elapsed = time.time() - start
+            for event in w.events:
+                if event.type != pygame.KEYDOWN:
+                    continue
+                if event.key in (pygame.K_LEFT, pygame.K_a):
+                    self.stall = max(0, self.stall - 1)
+                if event.key in (pygame.K_RIGHT, pygame.K_d):
+                    self.stall = min(3, self.stall + 1)
+                if event.key == pygame.K_SPACE:
+                    hit = self.stall == flaring
+                    self.throw_water(flaring, decoy, elapsed / limit, hit)
+                    return self.result(hit, "", "Wrong stall! The fire jumps to the next roof.", quiet_success=True)
+            if elapsed > limit:
+                return self.result(False, "", "Too slow! The fire spreads.")
+            target_x = BUCKET_STALLS[self.stall]
+            self.runner_x += (target_x - self.runner_x) * min(1.0, dt * 16)    # run to the stall
+            self.draw_stalls(elapsed, flaring, decoy, elapsed / limit, view)
+            self.hud(w.canvas, view, "Bucket Brigade")
+            if not self.message:
+                draw_text(w.canvas, "LEFT / RIGHT to run, SPACE to throw at the fire that flares up", w.font,
+                          COLORS["text"], WIDTH // 2, HEIGHT - 26, center=True)
+            w.present()
+
+    def draw_stalls(self, elapsed, flaring, decoy, share, view, splash=None):
+        """Main Street in June 1987: four burning stalls, one fire flaring (share 0 -> 1 = about to spread)."""
+        w = self.w
+        c = w.canvas
+        w.scenery.draw_back(c, 6)
+        shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        shade.fill((20, 8, 4, 110))
+        c.blit(shade, (0, 0))
+        pygame.draw.rect(c, (40, 30, 26), (0, GROUND_Y + 20, WIDTH, HEIGHT - GROUND_Y - 20))       # the street
+        for stall, x in enumerate(BUCKET_STALLS):
+            pygame.draw.rect(c, (70, 50, 44), (x - 70, GROUND_Y - 120, 140, 140))                   # the stall
+            for k in range(5):                                                                     # its awning
+                colour = (150, 50, 40) if k % 2 == 0 else (200, 190, 170)
+                pygame.draw.rect(c, colour, (x - 76 + k * 30, GROUND_Y - 140, 30, 24))
+            if stall == flaring:
+                size = 0.55 + 0.45 * share                       # grows until it spreads
+            else:
+                size = 0.25 + 0.35 * decoy * (0.8 + 0.2 * math.sin(elapsed * 3 + stall))
+            if splash is not None and stall == splash:
+                size = max(0.1, size * 0.3)                      # just doused
+            self.draw_fire(c, x, GROUND_Y - 140, size, elapsed + stall)
+            if stall == flaring and decoy < 0.6:                 # easy / normal: a heat meter shows which one
+                pygame.draw.rect(c, COLORS["bar_back"], (x - 40, GROUND_Y - 250, 80, 8), border_radius=3)
+                pygame.draw.rect(c, COLORS["damage"], (x - 40, GROUND_Y - 250, int(80 * share), 8), border_radius=3)
+        if view["help"] == "point_fire" and elapsed > 0.4:      # Walt points at the flaring fire
+            fx = BUCKET_STALLS[flaring]
+            bounce = int(6 * math.sin(elapsed * 8))
+            pygame.draw.polygon(c, COLORS["flashlight"], [(fx - 14, 110 + bounce), (fx + 14, 110 + bounce), (fx, 132 + bounce)])
+        walt_x = 60 if self.runner_x > 200 else WIDTH - 60
+        w.draw_sprite("walt", walt_x, HEIGHT - 40)
+        if view["help"] == "throw_too":                          # Walt with his own bucket
+            pygame.draw.rect(c, (120, 120, 130), (walt_x + 18, HEIGHT - 80, 18, 20))
+        w.draw_sprite("player", int(self.runner_x), HEIGHT - 40)
+        pygame.draw.rect(c, (120, 120, 130), (int(self.runner_x) + 18, HEIGHT - 80, 18, 20))      # the bucket
+
+    def draw_fire(self, c, x, y_bottom, size, t):
+        """Flames on a roof: size 0..1 sets how high and wide they burn."""
+        count = 3 + int(5 * size)
+        for k in range(count):
+            fx = x - 60 + int(120 * (k + 0.5) / count)
+            height = int((30 + 110 * size) * (0.75 + 0.25 * abs(math.sin(t * 7 + k * 1.7))))
+            pygame.draw.polygon(c, (255, 120 + (k % 3) * 45, 30),
+                                [(fx - 13, y_bottom), (fx + 13, y_bottom), (fx, y_bottom - height)])
+        if size > 0.5:
+            glow = pygame.Surface((200, 200), pygame.SRCALPHA)
+            pygame.draw.circle(glow, (255, 140, 40, int(70 * size)), (100, 100), 90)
+            c.blit(glow, (x - 100, y_bottom - 150))
+
+    def throw_water(self, flaring, decoy, share, hit):
+        """The water flies from the bucket to the stall (0.3 s); a hit puts that fire down."""
+        w = self.w
+        start = time.time()
+        x0, y0 = self.runner_x + 26, HEIGHT - 80
+        x1, y1 = BUCKET_STALLS[self.stall], GROUND_Y - 160
+        while time.time() - start < 0.3:
+            w.tick()
+            p = (time.time() - start) / 0.3
+            self.draw_stalls(time.time(), flaring, decoy, share, {"help": None}, splash=self.stall if hit and p > 0.7 else None)
+            for k in range(8):                                   # a curved splash of water
+                q = max(0.0, p - k * 0.03)
+                x = x0 + (x1 - x0) * q
+                y = y0 + (y1 - y0) * q - 120 * math.sin(math.pi * q)
+                pygame.draw.circle(w.canvas, (120, 180, 255), (int(x), int(y)), 6 - k // 2)
             w.present()

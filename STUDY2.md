@@ -117,10 +117,15 @@ After each night (questions in the game, `data/story_answers.csv`):
   of the difficulty band
 - **Comprehension**, one question per victim met (3 answers): separates understanding the clue from using it
 
-Per activity (one per night in the playtest: Flashlight Search, Lake Crossing, Smoke Escape): start and end
+Per activity (one per night in the playtest: Flashlight Search, Lake Crossing, Bucket Brigade): start and end
 difficulty and help, successes, mistakes, pressure (share of the fail budget used), the activity band, how
 often Walt stepped in (and what he said). After each night also: **"Which part did you enjoy most?"** (the
 fights / the ghosts' stories and tricks / the challenge / the story).
+
+Pilot changes (before the first playtest player, 12-13 Nov): the Lake Crossing became a dodging game (steer
+between three lanes), and Night C's Smoke Escape was replaced by the Bucket Brigade (same engine rules as in
+the bot runs and the activity band model). Each activity starts with 3 practice steps that are not counted.
+If an LLM decision is not ready 2 s after the walk, scripted Walt's rule decides that room (logged as "timeout").
 
 ## 5b. Hypotheses and analysis plan (fixed on 11 Nov 2026, BEFORE any playtest data)
 

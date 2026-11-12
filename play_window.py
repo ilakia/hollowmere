@@ -690,7 +690,7 @@ class WindowNarrator:
         for beat_id, line in scenes:
             self.memory_scene(beat_id, line)
 
-    def memory_scene(self, beat_id, line, style="clue"):
+    def memory_scene(self, beat_id, line, style="clue", label=None):
         """One flashback picture (at least 6 s and until Walt has finished, Space to go on): the remembered
         room with Walt still looking human in it, and ghost-Walt's words.
         style: "clue"  = sepia, a glowing ring around the clue (Night A)
@@ -756,6 +756,8 @@ class WindowNarrator:
                     gx, gy = random.randrange(WIDTH), random.randrange(HEIGHT)
                     c.set_at((gx, gy), (60, 50, 40))
                 draw_text(c, "JUNE 1987" if style == "fire" else "MEMORY", w.font_big, (255, 235, 200), 30, 60)
+                if label:                                                                # Night C: a keepsake found
+                    draw_text(c, label, w.font_small, (255, 220, 160), 30, 96)
             else:                                                                        # back at the gate, tonight
                 w.in_memory = False
                 draw_big_gate(c, 560, 0.0, w.font)
