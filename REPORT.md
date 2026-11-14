@@ -192,6 +192,23 @@ memory. On difficulty alone, the prediction model is the better choice. The LLM'
 companion experience, which this project could build and pilot, but not yet measure with real players. The
 playtest design (STUDY2.md 5b) is ready for that next step.
 
+## 7. Future work
+
+What was already tried to improve LLM Walt (section 3.2): predicted chances in the prompt, short option
+lists, clearer instructions, a safety net, a second try for his sentence, and options only close to the best.
+Because he chooses from the prediction model's list, the predictor alone (67%) is the ceiling for difficulty;
+LLM Walt is at 62%, so at most about 5 points are left. Not tried:
+
+1. **The real playtest** (STUDY2.md 5b, ready to run): the only way to test H2, H4 and H5, whether players
+   find LLM Walt more fun and more of a companion.
+2. **Split the work:** the prediction model chooses the difficulty, the LLM does what only it can do (talk,
+   tell the victims' stories, give hints, remember the player). On difficulty this would reach the
+   predictor's level and keep the companion; the difficulty result would then belong to the prediction model.
+3. **The activities:** LLM Walt's weakest part (25% vs 43% for the predictor); his activity choices and
+   step-ins need a closer look, with more activity runs than the 54 here.
+4. **A larger language model** (e.g. 8B instead of 3B): possibly better choices, but about three times slower
+   and too heavy for the 8 GB test laptop; it would need a stronger computer or a server.
+
 ## Reproduce
 
 ```bash
