@@ -1192,7 +1192,7 @@ class WindowPolicy(HumanPolicy):
             label, color = "Good", COLORS["charge"]
         else:
             label, color = "Clumsy...", COLORS["dim_text"]
-        w.popup(f"{label} {TIMING_BASE + TIMING_RANGE * score:.0%}", color, 470, 330)
+        w.popup(f"{label} {TIMING_BASE + TIMING_RANGE * score:.0%}", color, 170, 262)   # above the player, not on Walt
         return score
 
     def show_what_happened(self, view):

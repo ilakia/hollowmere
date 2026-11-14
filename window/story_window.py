@@ -427,7 +427,7 @@ class StoryNarrator(PW.WindowNarrator):
             self.keepsake_state = "taken"
             self.keepsakes.append(self.walk_keepsake["id"])
             w.sounds.play("win")
-            w.popup(f"Found: {self.walk_keepsake['name']}", COLORS["charge"], x, GROUND_Y - 90)
+            w.popup(f"Found: {self.walk_keepsake['name']}", COLORS["charge"], WIDTH // 2, 150)   # top centre, not on Walt
             w.speak(self.walk_keepsake["memory"])
 
     def flashback(self):

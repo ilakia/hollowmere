@@ -50,7 +50,7 @@ ACTIVITIES = {
                  "hold_light": {"p": 0.07, "forgive": 1}},
         "help_text": {"stay_back": "you stay back", "point": "you point the way to the next marker",
                       "hold_light": "you hold the light steady (a bigger beam, the first slip in each part is forgiven)"},
-        "words": {"point": ["point", "show you", "this way", "over there", "left", "right"],
+        "words": {"point": ["point", "show you", "this way", "over there", "left", "right", "guide", "lead you"],
                   "hold_light": ["light", "beam", "lamp", "torch", "hold"]},
     },
     "act_whack": {

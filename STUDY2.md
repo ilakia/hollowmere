@@ -130,6 +130,9 @@ When Walt changes the difficulty in the middle of an activity (the checkpoints a
 now visible in the game itself, without any text: it glides in over about a second (lake: the fog rolls back or
 in and the boat slows down or speeds up; flashlight: the light grows or shrinks; bucket: the other fires calm
 down or flare up). The engine rules and the checkpoints are unchanged (bot results identical).
+LLM Walt v3 (13-14 Nov, section 6c): safety net for clearly worse choices, a second try for his own sentence,
+and a shorter list of options when he steps in. Text in the window (strike rating, keepsake found) was moved
+so it no longer covers Walt.
 
 ## 5b. Hypotheses and analysis plan (fixed on 11 Nov 2026, BEFORE any playtest data)
 
@@ -230,6 +233,43 @@ LLM v2, Night A only (18 activities, 3 batches): he now gives experts "hard" in 
 nights: predictor 42%, scripted 36%, silent 27%). With 18 activities this cannot be told apart from the
 other versions; the LLM tests were stopped here (laptop battery). For the write-up: the LLM follows the
 numbers in the fights, and after a clearer instruction partly in the activities.
+
+### 6c. LLM Walt v3 and the final bot test (13-14 Nov, before the first playtest player)
+
+Three changes, made because the pilot showed he often sounded like scripted Walt (46% of sentences dropped)
+and the bots showed weak activity results:
+- **Safety net:** if his choice has a predicted in-band chance more than 10 points below the best option,
+  the best option is played (logged `llm_corrected`). He still chooses and still says his own sentence.
+  At step-ins the same rule uses the distance of the expected end from 50%.
+- **Second sentence try:** if his sentence fails the checks, he is asked once more with a short prompt that
+  names the chosen help; only if that also fails is the fixed line used.
+- **Step-in shortlist:** at a step-in he only sees options whose expected end is within 5 points of the
+  best one (at most 3).
+
+Test plan (fixed before running): development seeds 600000 (old vs new), tuning seeds 610000 (check the
+step-in shortlist), then one **final run on fresh seeds 620000** with all four versions, reported as it
+came out. Bots: 3 bot types x naive / listen / smart x 2 nights x Nights A, B, C (with activities).
+Run in one-night batches with the charger connected (the laptop shut down on battery again).
+
+Development seeds (600000): own sentence 53% (old) -> 87% (new); activities in band 19% -> 26%; normal
+fights 69% -> 67%. The step-ins made activities too easy, hence the shortlist.
+
+**Final test, fresh seeds 620000** (about 180 adjustable rooms per version, about 105 activities):
+
+| Walt | Adjustable rooms in band (H1 measure) | Normal fights | Activities | Night A / B / C |
+|---|---|---|---|---|
+| silent | 40% | 45% | 34% | 36 / 40 / 43% |
+| scripted | 41% | 42% | 40% | 39 / 40 / 43% |
+| **LLM v3** | **53%** | 60% | **46%** | 52 / 62 / 44% |
+| predictor only (ablation) | 50% | 61% | 38% | 49 / 52 / 49% |
+
+LLM Walt v3: own sentence in 90% of rooms, 23% of decisions corrected by the safety net, 0 fallbacks,
+0 timeouts, 3.6 s of model time per room (hidden while the player walks).
+Reading: LLM Walt is ahead of silent and scripted Walt in both fights and activities, and level with the
+predictor (ahead in the activities, equal in the fights); Night C is his weakest night (44%). With about
+180 rooms per version, differences under about 10 points are within chance. These are bots from the same
+simulator; the playtest is the real test. Victim rooms are judged by discovery, not by the band.
+Data: `data/llm_batches_v3/` (development), `data/llm_batches_v4/` (tuning), `data/llm_batches_v5/` (final).
 
 ## 7. How to run the playtest
 

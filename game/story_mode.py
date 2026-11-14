@@ -36,9 +36,10 @@ from .victims import NIGHTS, VICTIMS, play_victim_room
 from .activity_risk import ACTIVITY_FEATURES, activity_features, load_activity_model
 from .activities import (ACTIVITIES, DIFFICULTY_STEPS, HELP_ORDER, NIGHTS_WITH_ACTIVITIES, activity_band,
                          play_activity)
-from .walt_llm import (ACTIVITY_SYSTEM_PROMPT, HINT_SYSTEM_PROMPT, STEP_IN_SYSTEM_PROMPT, STORY_SYSTEM_PROMPT,
+from .walt_llm import (ACTIVITY_SYSTEM_PROMPT, FIGHT_HELP_TEXT, HINT_SYSTEM_PROMPT, SAY_SYSTEM_PROMPT,
+                       STEP_IN_IDEAL, STEP_IN_SYSTEM_PROMPT, STORY_SYSTEM_PROMPT,
                        WALT_SYSTEM_PROMPT, WaltClient, activity_prompt, check_activity_answer,
-                       check_activity_option, check_answer,
+                       check_activity_option, check_answer, fits_help, say_prompt, sentence_ok,
                        check_hint, check_story, hint_prompt, step_in_options, step_in_prompt, study1_room_index,
                        walt_prompt)
 
@@ -53,6 +54,10 @@ GOT_IT_LINE = "You've got it, kid. Keep doing that."
 STORY_WAIT_LINE = "Wait... I know that face."           # LLM Walt, if his life story is not ready yet
 HELP_WAIT_LINE = "Let me think, kid..."
 BUSY_LINE = "Hang on, kid, I'm thinking."
+SAFETY_MARGIN = 0.10           # 14 Nov: LLM Walt's choice is replaced by the best option if its predicted
+                               # chance to be in band is more than 10 points lower (logged as "llm_corrected")
+STEP_IN_CLOSE = 0.05           # 14 Nov: at a step-in he only sees options at most 5 points worse than the best
+STEP_IN_SHORTLIST = 3          # (bots, seeds 600000: with all options he made the activities too easy, 26% in band)
 SAID_MEMORY = 3                          # LLM Walt is shown his last 3 sentences, so he does not repeat them
 ACTIVITY_TABLE = Path(__file__).with_name("expected_activity.csv")   # made by activity_check.py
 
@@ -120,6 +125,7 @@ class LLMActivityCoach:
         self.spec = ACTIVITIES[activity_id]
         self.brain = brain
         self.fallbacks = 0
+        self.corrected = 0                     # step-ins where the safety net replaced his pick
         self.lines = []
 
     background = False                     # the game window sets True: the answer may arrive a few steps later
@@ -141,6 +147,9 @@ class LLMActivityCoach:
 
     def decide_step_in(self, view):
         options = step_in_options(self.spec, self.activity_id, view, self.brain.skill.table, self.brain.skill.fallback)
+        best_distance = abs(options[0]["end"] - STEP_IN_IDEAL)      # 14 Nov: only options close to the best
+        options = [o for o in options if abs(o["end"] - STEP_IN_IDEAL) - best_distance <= STEP_IN_CLOSE]
+        options = options[:STEP_IN_SHORTLIST]
         answer = LLMBrain.client.ask(step_in_prompt(self.spec, view, options, self.brain.said[-SAID_MEMORY:]),
                                      STEP_IN_SYSTEM_PROMPT, tag="|walt_step_in3")
         LLMBrain.client.save_cache()
@@ -151,13 +160,20 @@ class LLMActivityCoach:
             self.fallbacks += 1
             return None
         choice = options[number - 1]
-        fake = {"difficulty": choice["difficulty"], "help": choice["help"], "say": answer.get("say")}
-        _, _, say, dropped = check_activity_answer(fake, self.spec, self.brain.said)
-        unchanged = (choice["difficulty"], choice["help"]) == (view["difficulty"], view["help"])
-        if say is None and dropped == "does not fit the choice" and unchanged:
-            say = (answer.get("say") or "").strip() or None      # no change: any encouraging word is fine
+        best = options[0]                                        # closest to the ideal end (the list is sorted)
+        if abs(choice["end"] - STEP_IN_IDEAL) - abs(best["end"] - STEP_IN_IDEAL) > SAFETY_MARGIN:
+            choice = best                                        # safety net: his pick was clearly worse
+            self.corrected += 1
+        help_changed = choice["help"] != view["help"]
+        if help_changed:                                         # a new help: the sentence must say it
+            words = self.spec["words"][choice["help"]]
+            fits = lambda low: any(word in low for word in words)
+            what = self.spec["help_text"][choice["help"]]
+        else:                                                    # same help: any encouraging word is fine
+            fits = lambda low: True
+            what = None
+        say = self.brain.own_sentence(answer.get("say"), fits, what)
         if say:
-            self.brain.said.append(say)
             self.lines.append(say)
         return {"difficulty": choice["difficulty"], "help": choice["help"], "say": say}
 
@@ -492,14 +508,20 @@ class LLMBrain(ScriptedBrain):
                                  shortlist, self.memory, self.said[-SAID_MEMORY:])
         answer = LLMBrain.client.ask(prompt, ACTIVITY_SYSTEM_PROMPT, tag="|walt_activity3")
         LLMBrain.client.save_cache()
-        option, say, dropped = check_activity_option(answer, shortlist, spec, self.said)
+        option, first, dropped = check_activity_option(answer, shortlist, spec, self.said)
         if option is None:
             fallback["source"] = "fallback"
             return fallback
-        if say:
-            self.said.append(say)
+        source = "llm"
+        if shortlist[0]["in_band"] - option["in_band"] > SAFETY_MARGIN:
+            option, source = shortlist[0], "llm_corrected"      # safety net: his pick was clearly worse
+        words = spec["words"][option["help"]]
+        say = self.own_sentence(answer.get("say"), lambda low: any(word in low for word in words),
+                                spec["help_text"][option["help"]])
+        if say is None and source == "llm":
+            source = "llm_line_dropped"
         return {"difficulty": option["difficulty"], "help_mode": option["help"], "say": say, "reason": dropped,
-                "source": "llm" if say else "llm_line_dropped"}
+                "source": source}
 
     def decide(self, state):
         if state.get("activity"):
@@ -511,15 +533,35 @@ class LLMBrain(ScriptedBrain):
                              state["walt_is_enemy"], self.memory, self.said[-SAID_MEMORY:])
         answer = LLMBrain.client.ask(prompt, WALT_SYSTEM_PROMPT, tag="|walt")
         LLMBrain.client.save_cache()
-        option, say, dropped = check_answer(answer, shortlist, self.said)
+        option, first, dropped = check_answer(answer, shortlist, self.said)
         if option is None:
             fallback["source"] = "fallback"
             return fallback
+        source = "llm"
+        if shortlist[0]["in_band"] - option["in_band"] > SAFETY_MARGIN:
+            option, source = shortlist[0], "llm_corrected"      # safety net: his pick was clearly worse
+        help_mode = option["help_mode"]
+        say = self.own_sentence(answer.get("say"), lambda low: fits_help(low, help_mode),
+                                FIGHT_HELP_TEXT.get(help_mode))
+        if say is None and source == "llm":
+            source = "llm_line_dropped"
+        # without an accepted sentence the window shows scripted Walt's line for the chosen help
+        return {"difficulty": option["difficulty"], "help_mode": help_mode, "say": say,
+                "reason": dropped, "source": source}
+
+    def own_sentence(self, first, fits, what):
+        """His sentence for the option that is really played: the first one if it fits, otherwise one short
+        second prompt that only asks for a sentence about what he does (what). Output: the sentence, or None
+        (then scripted Walt's fixed line is spoken)."""
+        said = self.said[-SAID_MEMORY:]
+        say = sentence_ok(first, fits, said)
+        if say is None and what:
+            answer = LLMBrain.client.ask(say_prompt(what, said), SAY_SYSTEM_PROMPT, tag="|walt_say")
+            LLMBrain.client.save_cache()
+            say = sentence_ok(answer.get("say"), fits, said)
         if say:
             self.said.append(say)
-        # without an accepted sentence the window shows scripted Walt's line for the chosen help
-        return {"difficulty": option["difficulty"], "help_mode": option["help_mode"], "say": say,
-                "reason": dropped, "source": "llm" if say else "llm_line_dropped"}
+        return say
 
     def observe(self, state, row):
         super().observe(state, row)
@@ -702,6 +744,7 @@ def play_night(night, brain, policy, seed, narrator=None, with_activities=False)
                 activity_coach.background = True
             t = play_activity(player, activity, difficulty, help_mode, policy, rng, activity_coach)
             t["coach_fallbacks"] = getattr(activity_coach, "fallbacks", 0)
+            t["step_in_corrected"] = getattr(activity_coach, "corrected", 0)
             t["step_in_lines"] = " / ".join(getattr(activity_coach, "lines", []))
         elif info["victim"]:
             t = play_victim_room(player, info["victim"], help_mode, policy, rng, difficulty, coach)

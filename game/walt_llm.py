@@ -19,7 +19,7 @@ from . import config as C
 from .llm import MODEL, OLLAMA_URL, TIMEOUT_SECONDS, LLMClient, round_to
 
 WALT_CACHE = Path("data/walt_cache.json")
-ANSWER_TOKENS = {"|walt": 50, "|walt_hint": 45, "|walt_help": 45, "|walt_story": 75, "|warmup": 5}
+ANSWER_TOKENS = {"|walt_say": 40, "|walt": 50, "|walt_hint": 45, "|walt_help": 45, "|walt_story": 75, "|warmup": 5}
 
 
 class WaltClient(LLMClient):
@@ -132,10 +132,22 @@ HELP_WORDS = {
                   "all you", "myself out", "sit this", "step aside"],
     "hint": ["nudge", "tip", "hint", "warn", "aim", "eye out", "eyes open", "pointer", "tell you", "shout",
              "look out", "watch for"],
-    "heal": ["heal", "patch", "fix you", "mend", "bandage", "hurt", "wounds", "back on your feet", "doctor"],
+    "heal": ["heal", "patch", "fix you", "mend", "bandage", "hurt", "wounds", "back on your feet", "doctor",
+             "i've got you", "take care of you", "look after you", "catch your breath"],
     "fight": ["fight", "wrench", "swing", "hit", "side by side", "with you", "together", "beside you",
               "give 'em", "knock"],
 }
+# 14 Nov: most dropped sentences described a different help than the one chosen ("a nudge" while healing)
+# or none at all ("keep your wits about you"). Instead of dropping them at once, Walt now gets one short
+# second prompt that only asks for a sentence about what he actually does (say_prompt below).
+FIGHT_HELP_TEXT = {"stay_back": "you stay back and let the kid handle this one alone",
+                   "hint": "you give the kid hints and tips about the ghost",
+                   "heal": "you heal the kid and patch them up when they get hurt",
+                   "fight": "you fight side by side with the kid"}
+SAY_SYSTEM_PROMPT = """You are Walt, a gruff but kind old park mechanic who walks a kid through a haunted theme park.
+You are told what you are going to do now. Say ONE short spoken sentence to the kid (at most 18 words) that
+clearly tells them that, in your own words, and call them "kid". No numbers and no game words like difficulty.
+Answer only with JSON: {"say": "your sentence"}"""
 SIMILAR_LIMIT = 0.6         # a sentence sharing more than 60% of its words with an earlier one is a repeat
 
 
@@ -151,6 +163,30 @@ def is_repeat(say, said):
         if words and len(words & other) / len(words | other) > SIMILAR_LIMIT:
             return True
     return False
+
+
+def say_prompt(what_you_do, said=()):
+    """The second, short prompt: only a sentence about what Walt really does now."""
+    lines = [f"What you do now: {what_you_do}.",
+             "Say one sentence to the kid that clearly tells them this."]
+    if said:
+        lines.append("Do not repeat these lines: " + " / ".join(said))
+    return "\n".join(lines)
+
+
+def sentence_ok(say, fits, said=()):
+    """The same rules as for every sentence: not empty, short, no game words, fits his choice, no repeat.
+    fits = a function that gets the sentence in lower case. Output: the cleaned sentence, or None."""
+    if not isinstance(say, str) or not say.strip():
+        return None
+    say = say.strip()
+    low = say.lower()
+    if len(say.split()) > SAY_MAX_WORDS or any(ch.isdigit() for ch in say) or "%" in say or "_" in say \
+            or "difficult" in low:
+        return None
+    if not fits(low) or is_repeat(say, said):
+        return None
+    return say
 
 
 def fits_help(say, help_mode):
