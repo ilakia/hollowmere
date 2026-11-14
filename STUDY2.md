@@ -166,10 +166,38 @@ keepsakes found (Night B).
 
 **Who is counted:** playtest IDs only (not PILOT*, GUEST or the developer's own ID). A player who stops
 early counts for the nights they finished; within-player tests use the pairs that exist.
-**When the playtest ends:** at 18 players or on 24 Nov, whichever comes first.
+**When the playtest ends:** at 18 players or on 24 Nov, whichever comes first (changed 14 Nov: see the amendment below).
 **Known limits:** fixed night order (night and position cannot be separated); LLM Walt differs from the
 others in several ways at once (difficulty numbers, talking, memory), so the comparison is of companions as
 a whole; bots and the activity settings come from the same simulator (the playtest is the real test).
+
+### Amendment (14 Nov 2026, still BEFORE any playtest data): 4-5 players
+
+Reason: only 4-5 players can be recruited, not 9-18. Nothing has been played yet, so this change cannot be
+driven by results. The hypotheses H1-H5 and their measures stay the same; what changes is how they are
+judged.
+- **Why the sign tests are dropped as the decision rule:** with 5 players, even 5 of 5 players better gives
+  p = 1/32 = 0.031; after Holm's correction for 6 comparisons that is at best 0.19. No result could ever be
+  "significant", so the tests would only look like evidence.
+- **Main quantitative evidence = the bot test** (section 6c, fixed test plan, fresh seeds, about 180
+  adjustable rooms per version). It answers H1 (rooms in band) and H3 (weaknesses found) for simulated
+  players.
+- **The playtest = a small user study** that checks whether the bot pattern also shows with real players,
+  and is the only source for H2, H4 and H5 (felt difficulty, companion feeling, fun). Reported for each
+  hypothesis: every player's value per Walt version (a table and a dot plot, one line per player), the
+  number of players better / worse / equal with LLM Walt, and the mean difference. No p-values are claimed
+  as confirmation; the sign-test p-values may be shown with the note that they cannot reach 0.05 after
+  correction. H1 is also shown per room, pooled over players (about 5 players x 4 adjustable rooms = 20
+  rooms per version), as a description, not a test.
+- **What counts as "supports":** the playtest is read as *consistent* with a hypothesis when most players
+  (at least 4 of 5, or 3 of 4) are better with LLM Walt and the mean difference points the same way;
+  otherwise as *not shown*. Both are reported in the same way.
+- **The open answers become central:** after the last night each player is asked two short open questions
+  (what Walt did that helped or annoyed; which night felt best and why), noted word for word.
+- **Orders:** player IDs P01, P02, ... in order. P01-P03 get orders 1-3, which form a Latin square (each
+  Walt version once on each night), so with 3 players night and version are already balanced; P04-P05 add
+  orders 4-5. The imbalance with 4-5 players is reported.
+- **When the playtest ends:** when 5 players have finished, or on 24 Nov, whichever comes first.
 
 ## 6. Bot pre-check (`python story_brains_check.py`, done before the playtest)
 
@@ -270,6 +298,27 @@ predictor (ahead in the activities, equal in the fights); Night C is his weakest
 180 rooms per version, differences under about 10 points are within chance. These are bots from the same
 simulator; the playtest is the real test. Victim rooms are judged by discovery, not by the band.
 Data: `data/llm_batches_v3/` (development), `data/llm_batches_v4/` (tuning), `data/llm_batches_v5/` (final).
+Note: these runs used the bot-only night plan with two activities per night (`--activities`,
+NIGHTS_WITH_ACTIVITIES), not the playtest nights (one activity, three fights per night, `game/victims.py`).
+
+**Night C fix (14 Nov).** Night C was the weakest night for every version because of one room: the Ticket
+Booth (2 weak wisps) was too easy even on "hard" (expected HP lost 4 / 13 / 18% on easy / normal / hard;
+in the final test 81% of these rooms ended too easy). It was replaced by the Helter Skelter (`z2_barrel`,
+4 wisps, expected 17 / 46 / 57%, an existing room with Night C artwork), so every Walt can adjust it.
+Checked on the **playtest Night C** with fresh seeds 630000 (about 70 adjustable rooms per version):
+
+| Walt | Night C before (Ticket Booth) | Night C after (Helter Skelter) | Fights after | Bucket after |
+|---|---|---|---|---|
+| silent | 47% | 65% | 74% | 39% |
+| scripted | 46% | 67% | 76% | 39% |
+| LLM v3 | not run | 67% | 75% | 41% |
+| predictor only | 53% | 67% | 76% | 39% |
+
+The room itself went from 6% in band to 72%. On this night all versions are now level (65-67%): the fix
+makes Night C fairer and better to play for everyone; it does not give LLM Walt an advantage there.
+LLM Walt here: own sentence 87%, 0 timeouts, 6.0 s model time per room (in the window the walk hides about
+the first seconds; anything not ready 2 s after the walk is decided by the scripted rule and logged).
+Data: `data/llm_batches_v6/`.
 
 ## 7. How to run the playtest
 

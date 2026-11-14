@@ -79,8 +79,12 @@ VICTIMS = {
 NIGHTS = {
     "A": ["z1_cotton_candy", "martha", "z2_tilted_room", "act_flashlight", "z3_log_flume", "ned", "finale_gate"],
     "B": ["z1_ring_toss", "rosa", "act_lake", "twins", "z3_tunnel_boats", "z3_haunted_manor", "finale_gate"],
-    "C": ["benny", "z1_ticket_booth", "henry", "act_bucket", "z3_tunnel_boats", "z3_log_flume", "finale_gate"],   # bucket replaced the smoke escape after the pilot
+    "C": ["benny", "z2_barrel", "henry", "act_bucket", "z3_tunnel_boats", "z3_log_flume", "finale_gate"],
 }
+# Night C changes before the playtest: the bucket replaced the smoke escape (pilot), and the Helter Skelter
+# (z2_barrel, 4 ghosts) replaced the Ticket Booth (2 weak wisps). In the Ticket Booth players lose only
+# 4 / 13 / 18% HP on easy / normal / hard (expected_hp_lost.csv), so no Walt could put it in the 30-70% band;
+# the Helter Skelter expects 17 / 46 / 57%, so every Walt can adjust it.
 
 STUNNED_TURNS = 2           # Martha / Rosa after the flashlight: no attacks, take double damage
 BLIND_TURNS = 2             # after Rosa's flash: the player's attacks miss

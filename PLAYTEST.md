@@ -52,6 +52,9 @@ nights. Answer only technical questions ("the window froze").
 
 ## After the third night
 
+- **Two open questions, before the debrief** (write the answers down word for word, with the player ID):
+  1. "What did Walt do that helped you, or that annoyed you?"
+  2. "Which night felt best, and why?"
 - Thank them. **Debrief:** "Walt was a different version in each night: one silent, one with fixed lines,
   one run by a language model. Please don't tell other players before they have played."
 - Back up the data (after every session): copy `data/story_runs.csv`, `data/story_answers.csv` and
@@ -60,6 +63,8 @@ nights. Answer only technical questions ("the window froze").
 
 ## Who to invite and when to stop
 
-- 9-18 players; 12 or 18 balance the 6 orders best. Friends who have not seen the game.
-- The playtest ends at 18 players or on 24 Nov (whichever comes first, as fixed in STUDY2.md).
+- 4-5 players (changed 14 Nov, see the amendment in STUDY2.md 5b). Use the IDs strictly in order P01,
+  P02, P03, ...: P01-P03 together play every Walt version once on every night. Friends who have not seen
+  the game.
+- The playtest ends when 5 players have finished, or on 24 Nov (whichever comes first).
 - Pilot sessions use IDs starting with PILOT; they are left out of the analysis automatically.
