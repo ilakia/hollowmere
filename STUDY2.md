@@ -320,6 +320,24 @@ LLM Walt here: own sentence 87%, 0 timeouts, 6.0 s model time per room (in the w
 the first seconds; anything not ready 2 s after the walk is decided by the scripted rule and logged).
 Data: `data/llm_batches_v6/`.
 
+**All three playtest nights (14 Nov, seeds 630000, the night plan players will actually play, with the new
+Night C; about 215 adjustable rooms per version):**
+
+| Walt | Adjustable rooms in band | Normal fights | Activities | Night A / B / C | Too easy / too hard |
+|---|---|---|---|---|---|
+| silent | 63% | 71% | 39% | 54 / 69 / 65% | 25 / 12% |
+| scripted | 60% | 65% | 43% | 42 / 71 / 67% | 31 / 9% |
+| **LLM v3** | **66%** | 74% | 42% | 61 / 71 / 67% | 23 / 11% |
+| predictor only | 73% | 81% | 50% | 79 / 74 / 67% | 15 / 12% |
+
+LLM Walt v3: own sentence 84%, 18% corrected by the safety net, 3 fallbacks, 0 timeouts, 4.6 s per room.
+Reading: on the playtest nights LLM Walt is slightly ahead of silent (+3 points) and scripted (+6), which is
+within chance at this size, and behind the predictor alone (-7), mostly on Night A. There, in the Tilted
+Room, both choose "hard", but LLM Walt often adds healing or hints (the predictor stays back), so 12 of 18
+of these rooms ended too easy. The larger lead in the two-activity bot plan (53% vs 40-41%) does not carry
+over to the playtest nights. For the write-up: bots support "LLM Walt is at least as good as the simple
+versions at keeping rooms in band"; they do not support a large advantage on the playtest nights.
+
 ## 7. How to run the playtest
 
 ```
