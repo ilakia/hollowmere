@@ -58,6 +58,22 @@ SAFETY_MARGIN = 0.10           # 14 Nov: LLM Walt's choice is replaced by the be
                                # chance to be in band is more than 10 points lower (logged as "llm_corrected")
 STEP_IN_CLOSE = 0.05           # 14 Nov: at a step-in he only sees options at most 5 points worse than the best
 STEP_IN_SHORTLIST = 3          # (bots, seeds 600000: with all options he made the activities too easy, 26% in band)
+ROOM_CLOSE = 0.05              # 14 Nov: before a room he only sees options at most 5 points below the best
+                               # (bots, playtest nights: from all 6 he often added healing to an easy room,
+                               # too easy; the same rule fixed his step-ins)
+
+
+def close_options(scored, limit):
+    """The options Walt may choose from: the best one, plus any other whose predicted in-band chance is at
+    most ROOM_CLOSE below it, at most `limit` in all. Input: options sorted best first. Output: a list."""
+    best = scored[0]["in_band"]
+    close = []
+    for option in scored[:limit]:
+        if best - option["in_band"] <= ROOM_CLOSE:
+            close.append(option)
+    return close
+
+
 SAID_MEMORY = 3                          # LLM Walt is shown his last 3 sentences, so he does not repeat them
 ACTIVITY_TABLE = Path(__file__).with_name("expected_activity.csv")   # made by activity_check.py
 
@@ -503,7 +519,7 @@ class LLMBrain(ScriptedBrain):
         """As llm_risk in the fights: the model picks from the best scored options and says one sentence."""
         fallback = ScriptedBrain.decide_activity(self, state)
         spec = ACTIVITIES[state["activity"]]
-        shortlist = self.score_activity(state)[:ACTIVITY_SHORTLIST]
+        shortlist = close_options(self.score_activity(state), ACTIVITY_SHORTLIST)
         prompt = activity_prompt(spec, state["hp"], state["max_hp"], self.skill.estimate, self.recent_results(state),
                                  shortlist, self.memory, self.said[-SAID_MEMORY:])
         answer = LLMBrain.client.ask(prompt, ACTIVITY_SYSTEM_PROMPT, tag="|walt_activity3")
@@ -527,7 +543,7 @@ class LLMBrain(ScriptedBrain):
         if state.get("activity"):
             return self.decide_activity(state)
         fallback = super().decide(state)
-        shortlist = self.score_options(state)[:LLM_SHORTLIST]
+        shortlist = close_options(self.score_options(state), LLM_SHORTLIST)
         prompt = walt_prompt(state["night"], state["room_index"], state["rooms"], state["hp"], state["max_hp"],
                              state["potions"], self.skill.estimate, self.last_band, state["victim"], shortlist,
                              state["walt_is_enemy"], self.memory, self.said[-SAID_MEMORY:])

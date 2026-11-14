@@ -77,7 +77,7 @@ VICTIMS = {
 # (game/activities.py) in place of one normal fight: the playtest version. The bot-only plan with two
 # activities per night is NIGHTS_WITH_ACTIVITIES in game/activities.py.
 NIGHTS = {
-    "A": ["z1_cotton_candy", "martha", "z2_tilted_room", "act_flashlight", "z3_log_flume", "ned", "finale_gate"],
+    "A": ["z1_cotton_candy", "martha", "z2_laughing_stage", "act_flashlight", "z3_log_flume", "ned", "finale_gate"],
     "B": ["z1_ring_toss", "rosa", "act_lake", "twins", "z3_tunnel_boats", "z3_haunted_manor", "finale_gate"],
     "C": ["benny", "z2_barrel", "henry", "act_bucket", "z3_tunnel_boats", "z3_log_flume", "finale_gate"],
 }
@@ -85,6 +85,8 @@ NIGHTS = {
 # (z2_barrel, 4 ghosts) replaced the Ticket Booth (2 weak wisps). In the Ticket Booth players lose only
 # 4 / 13 / 18% HP on easy / normal / hard (expected_hp_lost.csv), so no Walt could put it in the 30-70% band;
 # the Helter Skelter expects 17 / 46 / 57%, so every Walt can adjust it.
+# Night A, same reason: the Laughing Stage (wraith + wisp, 19 / 37 / 55%) replaced the Tilted Room
+# (11 / 24 / 32%: even on hard it only just reached the band; 63% of these rooms ended too easy in the bots).
 
 STUNNED_TURNS = 2           # Martha / Rosa after the flashlight: no attacks, take double damage
 BLIND_TURNS = 2             # after Rosa's flash: the player's attacks miss

@@ -338,6 +338,27 @@ of these rooms ended too easy. The larger lead in the two-activity bot plan (53%
 over to the playtest nights. For the write-up: bots support "LLM Walt is at least as good as the simple
 versions at keeping rooms in band"; they do not support a large advantage on the playtest nights.
 
+**Last changes and final check (14 Nov, fresh seeds 640000, playtest nights).** Two changes from the
+diagnosis above: (1) Night A's Tilted Room (expected 11 / 24 / 32% HP lost) was replaced by the Laughing
+Stage (wraith + wisp, 19 / 37 / 55%, an existing room with its own artwork), the same reason as the Night C
+fix; (2) before a room or activity LLM Walt only sees options at most 5 points below the best (at most 6 for
+rooms, 3 for activities), the rule that already fixed his step-ins (`ROOM_CLOSE`, `close_options`).
+About 215 adjustable rooms per version:
+
+| Walt | Adjustable rooms in band | Normal fights | Activities | Night A / B / C | Too easy / too hard |
+|---|---|---|---|---|---|
+| silent | 53% | 64% | 19% | 43 / 54 / 61% | 31 / 16% |
+| scripted | 57% | 64% | 39% | 44 / 56 / 72% | 33 / 10% |
+| **LLM v3 (final)** | **62%** | 74% | 25% | 60 / 57 / 68% | 25 / 14% |
+| predictor only | 67% | 75% | 43% | 64 / 71 / 67% | 19 / 14% |
+
+LLM Walt: own sentence 88%, 0% corrected (the shorter list leaves no clearly worse option), 3 fallbacks,
+0 timeouts, 5.0 s model time per room. The new Laughing Stage room is in band 70% (non-LLM versions).
+Reading: LLM Walt is ahead of silent (+9 points) and scripted Walt (+5) and 5 points behind the predictor
+alone. In the **fights** he now equals the predictor (74% vs 75%); his weak spot is the **activities**
+(25%, only about 54 activities, so this number is uncertain; the lake in Night B was 17%). These are the
+settings the playtest uses; nothing is changed after this check. Data: `data/llm_batches_v7/`.
+
 ## 7. How to run the playtest
 
 ```
