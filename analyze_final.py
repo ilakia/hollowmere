@@ -196,6 +196,67 @@ def plot_by_night(rooms, path):
     plt.close(fig)
 
 
+def plot_paired(paired, path):
+    """Forest plot: LLM Walt minus each other version (points) with 95% intervals; a difference whose
+    interval does not cross 0 is clearly larger than chance."""
+    fig, ax = plt.subplots(figsize=(7, 3.6))
+    names = ["silent", "scripted", "predictor"]
+    for i, other in enumerate(names):
+        row = paired.loc[f"LLM - {other}"]
+        low = row["ci_low"] * 100
+        high = row["ci_high"] * 100
+        mean = row["mean_difference"] * 100
+        ax.plot([low, high], [i, i], color=COLORS[other], linewidth=4)
+        ax.plot(mean, i, "o", color="black", markersize=9)
+        ax.text(high + 1, i, f"{mean:+.0f} points", va="center")
+    ax.axvline(0, color="#888888", linestyle="--")
+    ax.set_yticks(range(len(names)))
+    ax.set_yticklabels([f"LLM vs {LABELS[n]}" for n in names])
+    ax.invert_yaxis()
+    ax.set_xlim(-20, 28)
+    ax.set_xlabel("Difference in adjustable rooms in band (percentage points, 95% interval)")
+    ax.set_title("Paired on the same 54 bot nights")
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
+def plot_by_bot(by_bot, path):
+    """Grouped bars: adjustable rooms in band per bot type for each version."""
+    fig, ax = plt.subplots(figsize=(7, 4))
+    bot_types = ["beginner", "average", "expert"]
+    width = 0.2
+    for j, version in enumerate(VERSIONS):
+        values = [by_bot.loc[version, b] * 100 for b in bot_types]
+        positions = [i + (j - 1.5) * width for i in range(len(bot_types))]
+        ax.bar(positions, values, width, label=LABELS[version], color=COLORS[version])
+    ax.set_xticks(range(len(bot_types)))
+    ax.set_xticklabels([b.capitalize() for b in bot_types])
+    ax.set_ylabel("Adjustable rooms in band (%)")
+    ax.set_ylim(0, 100)
+    ax.legend(ncol=2, fontsize=9)
+    ax.set_title("By bot type (bots, final settings)")
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
+def plot_hints(versions, path):
+    """Bars: share of victim weaknesses found by the 'listen' bots (they need a hint to find it)."""
+    fig, ax = plt.subplots(figsize=(6.5, 4))
+    names = list(versions.index)
+    values = versions["weakness_found_listen"] * 100
+    ax.bar([LABELS[n] for n in names], values, color=[COLORS[n] for n in names])
+    for i, value in enumerate(values):
+        ax.text(i, value / 2, f"{value:.0f}%", ha="center", color="white", fontweight="bold")
+    ax.set_ylabel("Victim weaknesses found (%)")
+    ax.set_ylim(0, 100)
+    ax.set_title("Hints: weaknesses found by bots that need a hint")
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+
+
 def plot_stages(stages, path):
     """Lines: how each version scored in each bot test stage (shows what the changes did)."""
     fig, ax = plt.subplots(figsize=(8, 4.2))
@@ -290,6 +351,9 @@ def main():
     plot_by_night(final, OUT / "final_by_night.png")
     plot_stages(stages, OUT / "final_stages.png")
     plot_own(nights, OUT / "final_own_nights.png")
+    plot_paired(paired, OUT / "final_paired.png")
+    plot_by_bot(by_bot, OUT / "final_by_bot_type.png")
+    plot_hints(versions, OUT / "final_hints.png")
     print(f"\nTables and figures saved to {OUT}/final_*")
 
 
