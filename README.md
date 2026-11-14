@@ -28,6 +28,7 @@ python story_brains_check.py --brains llm --nights A --games 1   # LLM Walt, sma
 python play_window.py --night A --companion llm   # one night with a chosen Walt (silent, scripted, llm)
 python play_window.py --playtest            # the real playtest: night and Walt version come from the player ID
 python analyze_study2.py                    # results per Walt version from the playtest data
+python analyze_final.py                     # final Study 2 analysis (bots + own nights) -> REPORT.md figures
 # how to run a playtest session (checklist, consent, fixed instructions): PLAYTEST.md
 
 # LLM directors need Ollama: brew install ollama && brew services start ollama && ollama pull llama3.2:3b

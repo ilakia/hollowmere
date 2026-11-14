@@ -8,6 +8,11 @@ tests them with **real players**:
 > and talks to them) keep players in the right difficulty band, help them discover hidden mechanics and
 > make the game more enjoyable than a scripted or a silent companion?**
 
+**Outcome (14 Nov 2026):** the playtest with friends did not take place before the deadline. Study 2 was
+finished with the bot test on the playtest nights (main evidence) and the developer's own 16 nights (a
+single-player case, not evidence for H1-H5). Results and limits: **REPORT.md** (`python analyze_final.py`).
+The playtest design below stays ready for a later study with real players.
+
 Study 2 runs in a **separate story mode** ("Night of the Fire"). The normal game, the engine rules used by
 the bots and every Study 1 result stay exactly as they are (sanity check unchanged).
 

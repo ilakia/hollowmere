@@ -1,0 +1,17 @@
+run_id,player_id,night,walt,adjustable_in_band,adjustable_rooms,outcome,fun,walt_helped,walt_companion,difficulty_felt,enjoyed_most
+window-PILOT1-297178,PILOT1,B,llm,0.75,4,escaped,4.0,5.0,5.0,3.0,The story
+window-PILOT1-891467,PILOT1,B,llm,0.75,4,escaped,5.0,4.0,4.0,4.0,
+window-PILOT1-891737,PILOT1,C,llm,0.75,4,escaped,4.0,4.0,4.0,3.0,
+window-PILOT2-424102,PILOT2,B,llm,0.75,4,escaped,3.0,4.0,4.0,3.0,The story
+window-PILOT3-492491,PILOT3,B,llm,0.75,4,escaped,5.0,4.0,4.0,4.0,The challenge
+window-PILOT4-511135,PILOT4,B,llm,0.75,4,escaped,4.0,4.0,4.0,4.0,The story
+window-PILOT5-511563,PILOT5,C,llm,0.5,4,escaped,2.0,2.0,3.0,3.0,The fights
+window-PILOT5-512404,PILOT5,C,llm,0.25,4,escaped,5.0,4.0,5.0,4.0,The challenge
+window-PILOT7-512645,PILOT7,A,llm,0.5,4,escaped,4.0,3.0,4.0,4.0,The challenge
+window-VARSHINI-777241,VARSHINI,B,scripted,0.75,4,escaped,,,,,
+window-VARSHINI-777711,VARSHINI,C,scripted,0.75,4,escaped,,,,,
+window-VARSHINI-778521,VARSHINI,C,scripted,0.75,4,escaped,,,,,
+window-VARSHINI-778731,VARSHINI,C,scripted,0.75,4,escaped,,,,,
+window-VARSHINI-815460,VARSHINI,A,llm,0.75,4,escaped,4.0,4.0,4.0,3.0,
+window-VARSHINI-815926,VARSHINI,B,llm,0.75,4,escaped,5.0,4.0,4.0,4.0,
+window-VARSHINI-816221,VARSHINI,C,llm,0.75,4,escaped,3.0,4.0,3.0,3.0,
